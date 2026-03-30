@@ -1,0 +1,906 @@
+{
+  "info": {
+    "name": "个人时间管理系统 API",
+    "description": "基于 SpringBoot + Vue 的个人时间管理系统接口文档",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "time-management-system"
+  },
+  "item": [
+    {
+      "name": "认证接口",
+      "item": [
+        {
+          "name": "用户注册",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"testuser\",\n  \"email\": \"test@example.com\",\n  \"password\": \"123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/register",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "register"]
+            },
+            "description": "用户注册接口，注册成功返回用户基本信息"
+          },
+          "response": []
+        },
+        {
+          "name": "用户登录",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const response = pm.response.json();",
+                  "if (response.code === 200 && response.data.token) {",
+                  "    pm.environment.set(\"token\", response.data.token);",
+                  "    console.log(\"Token saved:\", response.data.token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"testuser\",\n  \"password\": \"123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "用户登录，返回 JWT 令牌和用户信息"
+          },
+          "response": []
+        },
+        {
+          "name": "刷新令牌",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/refresh",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "refresh"]
+            },
+            "description": "使用旧令牌换取新令牌"
+          },
+          "response": []
+        },
+        {
+          "name": "修改密码",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"oldPassword\": \"123456\",\n  \"newPassword\": \"newpassword123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/password",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "password"]
+            },
+            "description": "修改当前登录用户的密码"
+          },
+          "response": []
+        },
+        {
+          "name": "获取当前用户",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/me",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "me"]
+            },
+            "description": "获取当前登录用户的详细信息"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "用户管理接口",
+      "item": [
+        {
+          "name": "更新个人信息",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nickname\": \"张三\",\n  \"avatar\": \"https://example.com/avatar.jpg\",\n  \"email\": \"newemail@example.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/users/profile",
+              "host": ["{{base_url}}"],
+              "path": ["users", "profile"]
+            },
+            "description": "更新当前用户的个人信息"
+          },
+          "response": []
+        },
+        {
+          "name": "获取用户信息（管理员）",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/users/1",
+              "host": ["{{base_url}}"],
+              "path": ["users", "1"]
+            },
+            "description": "管理员获取指定用户信息（普通用户无此权限）"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "任务分类接口",
+      "item": [
+        {
+          "name": "获取分类列表",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/categories",
+              "host": ["{{base_url}}"],
+              "path": ["categories"]
+            },
+            "description": "获取当前用户的所有任务分类"
+          },
+          "response": []
+        },
+        {
+          "name": "创建分类",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"学习\",\n  \"color\": \"#409EFF\",\n  \"sort\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/categories",
+              "host": ["{{base_url}}"],
+              "path": ["categories"]
+            },
+            "description": "创建新的任务分类"
+          },
+          "response": []
+        },
+        {
+          "name": "修改分类",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"工作\",\n  \"color\": \"#67C23A\",\n  \"sort\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/categories/1",
+              "host": ["{{base_url}}"],
+              "path": ["categories", "1"]
+            },
+            "description": "修改指定分类的信息"
+          },
+          "response": []
+        },
+        {
+          "name": "删除分类",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/categories/1",
+              "host": ["{{base_url}}"],
+              "path": ["categories", "1"]
+            },
+            "description": "删除分类（若分类下有任务，需前端提示或后端处理）"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "任务管理接口",
+      "item": [
+        {
+          "name": "获取任务列表",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/tasks?categoryId=1&priority=high&status=0&page=1&size=10",
+              "host": ["{{base_url}}"],
+              "path": ["tasks"],
+              "query": [
+                {
+                  "key": "categoryId",
+                  "value": "1",
+                  "description": "分类ID（可选）"
+                },
+                {
+                  "key": "priority",
+                  "value": "high",
+                  "description": "优先级：high/medium/low（可选）"
+                },
+                {
+                  "key": "status",
+                  "value": "0",
+                  "description": "状态：0-未完成，1-已完成（可选）"
+                },
+                {
+                  "key": "startDate",
+                  "value": "2025-01-01",
+                  "description": "开始日期（可选）"
+                },
+                {
+                  "key": "endDate",
+                  "value": "2025-12-31",
+                  "description": "结束日期（可选）"
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "页码"
+                },
+                {
+                  "key": "size",
+                  "value": "10",
+                  "description": "每页条数"
+                }
+              ]
+            },
+            "description": "分页获取任务列表，支持多条件筛选"
+          },
+          "response": []
+        },
+        {
+          "name": "获取单个任务",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/tasks/1",
+              "host": ["{{base_url}}"],
+              "path": ["tasks", "1"]
+            },
+            "description": "根据任务ID获取详细信息"
+          },
+          "response": []
+        },
+        {
+          "name": "创建任务",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"完成项目报告\",\n  \"categoryId\": 1,\n  \"priority\": \"high\",\n  \"deadline\": \"2025-04-01T23:59:59\",\n  \"estimatedMinutes\": 120,\n  \"description\": \"撰写项目总结报告\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/tasks",
+              "host": ["{{base_url}}"],
+              "path": ["tasks"]
+            },
+            "description": "创建新任务"
+          },
+          "response": []
+        },
+        {
+          "name": "更新任务",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"修改后的任务标题\",\n  \"priority\": \"medium\",\n  \"deadline\": \"2025-04-02T23:59:59\",\n  \"estimatedMinutes\": 90\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/tasks/1",
+              "host": ["{{base_url}}"],
+              "path": ["tasks", "1"]
+            },
+            "description": "更新任务信息（只传需要修改的字段）"
+          },
+          "response": []
+        },
+        {
+          "name": "删除任务",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/tasks/1",
+              "host": ["{{base_url}}"],
+              "path": ["tasks", "1"]
+            },
+            "description": "逻辑删除任务"
+          },
+          "response": []
+        },
+        {
+          "name": "完成任务",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"actualMinutes\": 150\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/tasks/1/complete",
+              "host": ["{{base_url}}"],
+              "path": ["tasks", "1", "complete"]
+            },
+            "description": "标记任务为已完成，并记录实际耗时"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "日程接口",
+      "item": [
+        {
+          "name": "获取日程列表",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/schedules?startDate=2025-03-01&endDate=2025-03-31",
+              "host": ["{{base_url}}"],
+              "path": ["schedules"],
+              "query": [
+                {
+                  "key": "startDate",
+                  "value": "2025-03-01",
+                  "description": "开始日期"
+                },
+                {
+                  "key": "endDate",
+                  "value": "2025-03-31",
+                  "description": "结束日期"
+                }
+              ]
+            },
+            "description": "获取指定日期范围内的日程列表"
+          },
+          "response": []
+        },
+        {
+          "name": "创建日程",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"团队会议\",\n  \"taskId\": 1,\n  \"startTime\": \"2025-03-25T10:00:00\",\n  \"endTime\": \"2025-03-25T11:00:00\",\n  \"remindBefore\": 15\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/schedules",
+              "host": ["{{base_url}}"],
+              "path": ["schedules"]
+            },
+            "description": "创建新的日程事件"
+          },
+          "response": []
+        },
+        {
+          "name": "更新日程",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"修改后的会议\",\n  \"startTime\": \"2025-03-25T14:00:00\",\n  \"endTime\": \"2025-03-25T15:00:00\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/schedules/1",
+              "host": ["{{base_url}}"],
+              "path": ["schedules", "1"]
+            },
+            "description": "更新日程信息"
+          },
+          "response": []
+        },
+        {
+          "name": "删除日程",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/schedules/1",
+              "host": ["{{base_url}}"],
+              "path": ["schedules", "1"]
+            },
+            "description": "逻辑删除日程"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "时间记录接口",
+      "item": [
+        {
+          "name": "获取时间记录",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/time-records?taskId=1&startDate=2025-03-01&endDate=2025-03-31&page=1&size=10",
+              "host": ["{{base_url}}"],
+              "path": ["time-records"],
+              "query": [
+                {
+                  "key": "taskId",
+                  "value": "1",
+                  "description": "任务ID（可选）"
+                },
+                {
+                  "key": "startDate",
+                  "value": "2025-03-01",
+                  "description": "开始日期"
+                },
+                {
+                  "key": "endDate",
+                  "value": "2025-03-31",
+                  "description": "结束日期"
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "页码"
+                },
+                {
+                  "key": "size",
+                  "value": "10",
+                  "description": "每页条数"
+                }
+              ]
+            },
+            "description": "分页获取时间记录，支持按任务和日期范围筛选"
+          },
+          "response": []
+        },
+        {
+          "name": "创建记录（手动）",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"taskId\": 1,\n  \"startTime\": \"2025-03-25T09:00:00\",\n  \"endTime\": \"2025-03-25T11:00:00\",\n  \"durationMinutes\": 120,\n  \"note\": \"专注工作\",\n  \"recordDate\": \"2025-03-25\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/time-records",
+              "host": ["{{base_url}}"],
+              "path": ["time-records"]
+            },
+            "description": "手动添加时间记录（可只提供两个时间或直接给时长）"
+          },
+          "response": []
+        },
+        {
+          "name": "计时器开始",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/time-records/start",
+              "host": ["{{base_url}}"],
+              "path": ["time-records", "start"]
+            },
+            "description": "开始计时，后端创建临时记录，返回recordId和开始时间"
+          },
+          "response": []
+        },
+        {
+          "name": "计时器停止",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"taskId\": 1,\n  \"note\": \"完成任务\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/time-records/{recordId}/stop",
+              "host": ["{{base_url}}"],
+              "path": ["time-records", "{recordId}", "stop"]
+            },
+            "description": "停止计时，计算时长并更新记录（recordId为开始计时返回的ID）"
+          },
+          "response": []
+        },
+        {
+          "name": "删除记录",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/time-records/1",
+              "host": ["{{base_url}}"],
+              "path": ["time-records", "1"]
+            },
+            "description": "逻辑删除时间记录"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "数据统计接口",
+      "item": [
+        {
+          "name": "时间分配饼图数据",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/stats/time-distribution?startDate=2025-03-01&endDate=2025-03-31",
+              "host": ["{{base_url}}"],
+              "path": ["stats", "time-distribution"],
+              "query": [
+                {
+                  "key": "startDate",
+                  "value": "2025-03-01",
+                  "description": "开始日期"
+                },
+                {
+                  "key": "endDate",
+                  "value": "2025-03-31",
+                  "description": "结束日期"
+                }
+              ]
+            },
+            "description": "获取各类任务总耗时占比（饼图数据）"
+          },
+          "response": []
+        },
+        {
+          "name": "任务完成率趋势",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/stats/completion-trend?startDate=2025-03-01&endDate=2025-03-31&groupBy=day",
+              "host": ["{{base_url}}"],
+              "path": ["stats", "completion-trend"],
+              "query": [
+                {
+                  "key": "startDate",
+                  "value": "2025-03-01",
+                  "description": "开始日期"
+                },
+                {
+                  "key": "endDate",
+                  "value": "2025-03-31",
+                  "description": "结束日期"
+                },
+                {
+                  "key": "groupBy",
+                  "value": "day",
+                  "description": "分组粒度：day/week"
+                }
+              ]
+            },
+            "description": "获取任务完成率趋势（折线图数据）"
+          },
+          "response": []
+        },
+        {
+          "name": "每日专注时长",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/stats/daily-focus?startDate=2025-03-01&endDate=2025-03-31",
+              "host": ["{{base_url}}"],
+              "path": ["stats", "daily-focus"],
+              "query": [
+                {
+                  "key": "startDate",
+                  "value": "2025-03-01",
+                  "description": "开始日期"
+                },
+                {
+                  "key": "endDate",
+                  "value": "2025-03-31",
+                  "description": "结束日期"
+                }
+              ]
+            },
+            "description": "获取每日专注总时长（折线图数据）"
+          },
+          "response": []
+        },
+        {
+          "name": "预估与实际对比",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/stats/estimate-vs-actual?startDate=2025-03-01&endDate=2025-03-31",
+              "host": ["{{base_url}}"],
+              "path": ["stats", "estimate-vs-actual"],
+              "query": [
+                {
+                  "key": "startDate",
+                  "value": "2025-03-01",
+                  "description": "开始日期"
+                },
+                {
+                  "key": "endDate",
+                  "value": "2025-03-31",
+                  "description": "结束日期"
+                }
+              ]
+            },
+            "description": "获取已完成任务的预估耗时与实际耗时对比（柱状图数据）"
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080/api/v1",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}
