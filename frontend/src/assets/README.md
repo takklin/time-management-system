@@ -1,0 +1,3 @@
+# 编码：base64
+# 一个最小的 1x1 透明 PNG
+data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+P+/HgAFhAJ/wlseKgAAAABJRU5ErkJggg==
