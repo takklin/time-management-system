@@ -31,7 +31,21 @@ public class AuthServiceImpl implements AuthService {
         if (user == null) {
             throw new RuntimeException("用户不存在");
         }
-        if (!BCrypt.checkpw(dto.getPassword(), user.getPassword())) {
+        boolean passwordMatch;
+        String storedPassword = user.getPassword();
+        if (storedPassword != null && storedPassword.startsWith("$2a$")) {
+            passwordMatch = BCrypt.checkpw(dto.getPassword(), storedPassword);
+        } else {
+            // 兼容原始明文密码数据
+            passwordMatch = storedPassword != null && storedPassword.equals(dto.getPassword());
+            if (passwordMatch) {
+                // 迁移为加密密码
+                String encoded = new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder().encode(dto.getPassword());
+                user.setPassword(encoded);
+                userMapper.updateById(user);
+            }
+        }
+        if (!passwordMatch) {
             throw new RuntimeException("密码错误");
         }
         String token = JwtUtil.generateToken(user.getId());

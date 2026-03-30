@@ -19,7 +19,11 @@ public class TaskController {
 
     @GetMapping
     public Result<List<Task>> list() {
-        return Result.success(taskService.list(currentUserId()));
+        Long userId = currentUserId();
+        if (userId == null) {
+            return Result.error(401, "Unauthorized");
+        }
+        return Result.success(taskService.list(userId));
     }
 
     @GetMapping("/{id}")

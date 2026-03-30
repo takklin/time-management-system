@@ -22,16 +22,7 @@ public class StatsController {
 
     @GetMapping("/time-distribution")
     public Result<List<Map<String, Object>>> timeDistribution(@RequestParam String startDate, @RequestParam String endDate) {
-        List<Map<String, Object>> data = timeRecordMapper.selectMaps(
-                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>()
-                        .select("c.name, SUM(t.duration_minutes) AS value")
-                        .from("time_record t")
-                        .leftJoin("task ta ON t.task_id=ta.id")
-                        .leftJoin("category c ON ta.category_id=c.id")
-                        .eq("t.user_id", currentUserId())
-                        .between("t.record_date", startDate, endDate)
-                        .groupBy("c.name")
-        );
+        List<Map<String, Object>> data = timeRecordMapper.selectTimeDistribution(currentUserId(), startDate, endDate);
         return Result.success(data);
     }
 
@@ -52,13 +43,7 @@ public class StatsController {
     @GetMapping("/estimate-vs-actual")
     public Result<List<Map<String, Object>>> estimateVsActual(@RequestParam String startDate,
                                                                @RequestParam String endDate) {
-        List<Map<String, Object>> data = timeRecordMapper.selectMaps(
-                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>()
-                        .select("ta.title, ta.estimated_minutes AS estimated, ta.actual_minutes AS actual")
-                        .from("task ta")
-                        .eq("ta.user_id", currentUserId())
-                        .between("ta.completed_at", startDate, endDate)
-        );
+        List<Map<String, Object>> data = timeRecordMapper.selectEstimateVsActual(currentUserId(), startDate, endDate);
         return Result.success(data);
     }
 }
