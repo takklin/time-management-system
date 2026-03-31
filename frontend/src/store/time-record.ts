@@ -15,10 +15,14 @@ export const useTimeRecordStore = defineStore('timeRecord', () => {
   const records = ref<TimeRecord[]>([])
   const loading = ref(false)
 
-  async function fetchRecords() {
+  async function fetchRecords(startDate?: string, endDate?: string) {
     loading.value = true
     try {
-      const response = await getTimeRecords()
+      const today = new Date()
+      const firstDay = startDate || new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]
+      const lastDay = endDate || new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0]
+
+      const response = await getTimeRecords({ startDate: firstDay, endDate: lastDay })
       records.value = response.data || response
     } finally {
       loading.value = false

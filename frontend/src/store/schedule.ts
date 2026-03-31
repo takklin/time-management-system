@@ -17,10 +17,14 @@ export const useScheduleStore = defineStore('schedule', () => {
   const loading = ref(false)
   const selectedDate = ref(new Date().toISOString().split('T')[0])
 
-  async function fetchSchedules() {
+  async function fetchSchedules(startDate?: string, endDate?: string) {
     loading.value = true
     try {
-      const response = await getSchedules()
+      const today = new Date()
+      const firstDay = startDate || new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]
+      const lastDay = endDate || new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0]
+
+      const response = await getSchedules({ startDate: firstDay, endDate: lastDay })
       schedules.value = response.data || response
     } finally {
       loading.value = false

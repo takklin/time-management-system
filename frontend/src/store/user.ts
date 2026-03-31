@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { login, register, getCurrentUser, logout as apiLogout } from '@/api/auth'
+import { login, register, getCurrentUser, logout as apiLogout, changePassword as changePasswordApi, uploadAvatar as uploadAvatarApi, updateProfile as updateProfileApi } from '@/api/auth'
 import { removeToken, getToken } from '@/utils/auth'
 import { setToken as saveToken } from '@/utils/auth'
 
@@ -8,6 +8,8 @@ export interface User {
   id: number
   username: string
   email: string
+  nickname?: string
+  avatar?: string
   role?: string
 }
 
@@ -55,6 +57,29 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
+  async function changePassword(oldPassword: string, newPassword: string) {
+    const response: any = await changePasswordApi({ oldPassword, newPassword })
+    return response
+  }
+
+  async function uploadAvatar(file: File) {
+    const response: any = await uploadAvatarApi(file)
+    if (response) {
+      user.value = response
+      return response
+    }
+    throw new Error('上传头像失败')
+  }
+
+  async function updateProfile(email: string, nickname: string) {
+    const response: any = await updateProfileApi({ email, nickname })
+    if (response) {
+      user.value = response
+      return response
+    }
+    throw new Error('更新资料失败')
+  }
+
   async function logout() {
     try {
       await apiLogout()
@@ -79,6 +104,9 @@ export const useUserStore = defineStore('user', () => {
     loginUser,
     registerUser,
     fetchUserInfo,
+    changePassword,
+    uploadAvatar,
+    updateProfile,
     logout,
     setToken,
   }
