@@ -39,7 +39,7 @@
             <el-input-number v-model="manualForm.duration" :min="1" />
           </el-form-item>
           <el-form-item label="备注">
-            <el-input v-model="manualForm.notes" type="textarea" rows="2" />
+            <el-input v-model="manualForm.notes" type="textarea" :rows="2" />
           </el-form-item>
           <el-form-item>
             <el-button type="primary" @click="saveManualRecord">保存记录</el-button>
@@ -97,8 +97,13 @@ const formattedTime = computed(() => {
 })
 
 onMounted(async () => {
-  await taskStore.fetchTasks()
-  await timeRecordStore.fetchRecords()
+  try {
+    await taskStore.fetchTasks()
+    await timeRecordStore.fetchRecords()
+  } catch (error) {
+    console.error('TimeRecords load failed', error)
+    ElMessage.error('加载时间记录失败，请稍后重试')
+  }
 })
 
 const startTimer = () => {

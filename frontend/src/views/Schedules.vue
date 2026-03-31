@@ -45,7 +45,7 @@
           <el-input-number v-model="formData.reminderTime" :min="0" placeholder="提醒提前时间（分钟）" />
         </el-form-item>
         <el-form-item label="描述">
-          <el-input v-model="formData.description" type="textarea" rows="4" placeholder="输入日程描述" />
+          <el-input v-model="formData.description" type="textarea" :rows="4" placeholder="输入日程描述" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -93,8 +93,13 @@ const selectedDateSchedules = computed(() => {
 })
 
 onMounted(async () => {
-  await scheduleStore.fetchSchedules()
-  await taskStore.fetchTasks()
+  try {
+    await scheduleStore.fetchSchedules()
+    await taskStore.fetchTasks()
+  } catch (error) {
+    console.error('Schedules load failed', error)
+    ElMessage.error('加载日程数据失败，请稍后重试')
+  }
 })
 
 const formatTime = (time: string) => {

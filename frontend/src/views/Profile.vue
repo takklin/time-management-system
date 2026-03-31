@@ -95,6 +95,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { useUserStore } from '@/store/user'
+import { getCategories, createCategory, deleteCategory as apiDeleteCategory } from '@/api/tasks'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const userStore = useUserStore()
@@ -106,38 +107,78 @@ const formData = reactive({
   nickname: '',
 })
 
-const passwordForm = reactive({
-  oldPassword: '',
-  newPassword: '',
-  confirmPassword: '',
-})
-
-const categories = reactive([
-  { id: 1, name: '工作', color: '#409EFF' },
-  { id: 2, name: '学习', color: '#67C23A' },
-  { id: 3, name: '生活', color: '#E6A23C' },
-  { id: 4, name: '运动', color: '#F56C6C' },
-])
+const categories = ref([] as Array<{ id: number; name: string; color: string }>)
 
 const newCategory = reactive({
   name: '',
   color: '#409EFF',
 })
 
-onMounted(() => {
-  // TODO: 加载用户信息
+const passwordForm = reactive({
+  oldPassword: '',
+  newPassword: '',
+  confirmPassword: '',
+})
+
+// categories 和 newCategory 已在上方声明
+
+const fetchCategories = async () => {
+  try {
+    const response: any = await getCategories()
+    categories.value = response.data || response
+  } catch (error) {
+    console.error('获取分类失败', error)
+    ElMessage.error('获取分类失败')
+  }
+}
+
+onMounted(async () => {
+  try {
+    await userStore.fetchUserInfo()
+    formData.email = userStore.user?.email || ''
+    formData.nickname = userStore.user?.nickname || ''
+    const avatar = userStore.user?.avatar || ''
+    if (avatar) {
+      userAvatar.value = avatar.startsWith('http') ? avatar : avatar
+    }
+    await fetchCategories()
+  } catch (error) {
+    console.error('Failed to load profile', error)
+  }
 })
 
 const uploadAvatar = () => {
-  ElMessage.info('头像上传功能开发中')
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = 'image/*'
+  input.onchange = async (event: Event) => {
+    const file = (event.target as HTMLInputElement).files?.[0]
+    if (!file) return
+
+    try {
+      const updated = await userStore.uploadAvatar(file)
+      userAvatar.value = updated.avatar || userAvatar.value
+      ElMessage.success('头像上传成功')
+    } catch (err) {
+      console.error('上传头像失败', err)
+      ElMessage.error('头像上传失败')
+    }
+  }
+  input.click()
 }
 
-const saveProfile = () => {
-  ElMessage.success('个人信息保存成功')
-  // TODO: 调用 API 保存
+const saveProfile = async () => {
+  try {
+    const updated = await userStore.updateProfile(formData.email, formData.nickname)
+    userStore.user = updated
+    ElMessage.success('个人信息保存成功')
+  } catch (err) {
+    console.error('保存个人信息失败', err)
+    ElMessage.error('个人信息保存失败')
+  }
 }
 
-const changePassword = () => {
+const changePassword = async () => {
   if (!passwordForm.oldPassword || !passwordForm.newPassword) {
     ElMessage.error('请填写密码')
     return
@@ -148,28 +189,34 @@ const changePassword = () => {
     return
   }
 
-  ElMessage.success('密码修改成功')
-  passwordForm.oldPassword = ''
-  passwordForm.newPassword = ''
-  passwordForm.confirmPassword = ''
-  // TODO: 调用 API 修改密码
+  try {
+    await userStore.changePassword(passwordForm.oldPassword, passwordForm.newPassword)
+    ElMessage.success('密码修改成功')
+    passwordForm.oldPassword = ''
+    passwordForm.newPassword = ''
+    passwordForm.confirmPassword = ''
+  } catch (err) {
+    console.error('修改密码失败', err)
+    ElMessage.error('修改密码失败，请检查旧密码')
+  }
 }
 
-const addCategory = () => {
+const addCategory = async () => {
   if (!newCategory.name.trim()) {
     ElMessage.error('请输入分类名称')
     return
   }
 
-  categories.push({
-    id: Date.now(),
-    name: newCategory.name,
-    color: newCategory.color,
-  })
-
-  newCategory.name = ''
-  newCategory.color = '#409EFF'
-  ElMessage.success('分类添加成功')
+  try {
+    await createCategory({ name: newCategory.name, color: newCategory.color })
+    await fetchCategories()
+    newCategory.name = ''
+    newCategory.color = '#409EFF'
+    ElMessage.success('分类添加成功')
+  } catch (error) {
+    console.error('添加分类失败', error)
+    ElMessage.error('添加分类失败')
+  }
 }
 
 const deleteCategory = (id: number) => {
@@ -178,11 +225,14 @@ const deleteCategory = (id: number) => {
     cancelButtonText: '取消',
     type: 'warning',
   })
-    .then(() => {
-      const index = categories.findIndex(c => c.id === id)
-      if (index > -1) {
-        categories.splice(index, 1)
+    .then(async () => {
+      try {
+        await apiDeleteCategory(id)
+        await fetchCategories()
         ElMessage.success('分类删除成功')
+      } catch (error) {
+        console.error('删除分类失败', error)
+        ElMessage.error('删除分类失败')
       }
     })
     .catch(() => {

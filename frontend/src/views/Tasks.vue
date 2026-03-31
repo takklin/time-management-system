@@ -71,7 +71,7 @@
           <el-input-number v-model="formData.estimatedTime" placeholder="小时" :min="0" />
         </el-form-item>
         <el-form-item label="描述">
-          <el-input v-model="formData.description" type="textarea" rows="4" placeholder="输入任务描述" />
+          <el-input v-model="formData.description" type="textarea" :rows="4" placeholder="输入任务描述" />
         </el-form-item>
       </el-form>
       <template #footer>

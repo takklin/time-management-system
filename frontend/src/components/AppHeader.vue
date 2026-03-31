@@ -16,7 +16,7 @@
         </el-input>
       </div>
 
-      <el-button type="text" @click="showNotifications">
+      <el-button type="link" @click="showNotifications">
         <el-icon><Bell /></el-icon>
         <el-badge :value="notificationCount" class="badge" />
       </el-button>
@@ -39,7 +39,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/store/user'
 import { ElMessage } from 'element-plus'
@@ -50,7 +50,12 @@ const userStore = useUserStore()
 
 const searchText = ref('')
 const notificationCount = ref(0)
-const userAvatar = ref('https://cube.elemecdn.com/0/88/03b0f476b6411127aa8e8b9be76153.jpeg')
+
+const userAvatar = computed(() => {
+  const defaultAvatar = 'https://cube.elemecdn.com/0/88/03b0f476b6411127aa8e8b9be76153.jpeg'
+  const avatar = userStore.user?.avatar || ''
+  return avatar ? (avatar.startsWith('http') ? avatar : avatar) : defaultAvatar
+})
 
 const showNotifications = () => {
   ElMessage.info('暂无新通知')
