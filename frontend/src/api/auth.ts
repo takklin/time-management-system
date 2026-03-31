@@ -49,6 +49,22 @@ export function changePassword(data: { oldPassword: string; newPassword: string 
 }
 
 /**
+ * 上传头像（file form-data）
+ */
+export function uploadAvatar(file: File) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return service.post('/v1/auth/avatar', formData)
+}
+
+/**
+ * 更新个人资料
+ */
+export function updateProfile(data: { email: string; nickname: string }) {
+  return service.put('/v1/auth/profile', data)
+}
+
+/**
  * 用户登出
  */
 export function logout() {

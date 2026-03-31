@@ -10,6 +10,8 @@ export interface TimeRecord {
 }
 
 export interface TimeRecordQuery {
+  startDate?: string
+  endDate?: string
   taskId?: number
   dateRange?: [string, string]
   page?: number
