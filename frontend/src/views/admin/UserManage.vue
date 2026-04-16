@@ -1,87 +1,246 @@
 <template>
   <div class="admin-user-manage">
-    <div class="tools">
-      <SearchBar v-model:value="query.keyword" placeholder="用户名/邮箱" @search="loadUsers" />
-      <el-button type="primary" @click="loadUsers">刷新</el-button>
+    <!-- 工具栏 -->
+    <div class="tools-section">
+      <el-card>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+          <el-input v-model="query.keyword" placeholder="搜索用户名/邮箱" style="width: 200px; " clearable />
+          <el-select v-model="query.status" placeholder="账号状态" style="width: 150px;" clearable>
+            <el-option label="正常" :value="0" />
+            <el-option label="禁用" :value="1" />
+          </el-select>
+          <el-select v-model="query.orderBy" placeholder="排序字段" style="width: 150px;" clearable>
+            <el-option label="注册天数" value="registrationDays" />
+            <el-option label="完成率" value="completionRate" />
+            <el-option label="最后活跃时间" value="lastActiveTime" />
+          </el-select>
+          <el-select v-model="query.orderType" placeholder="排序方式" style="width: 100px;">
+            <el-option label="降序" value="desc" />
+            <el-option label="升序" value="asc" />
+          </el-select>
+          <el-button type="primary" @click="loadUsers">搜索</el-button>
+          <el-button @click="resetFilters">重置</el-button>
+        </div>
+      </el-card>
     </div>
 
-    <el-table :data="users" stripe border v-loading="loading" style="width: 100%">
-      <el-table-column prop="id" label="ID" width="80" />
-      <el-table-column prop="username" label="用户名" />
-      <el-table-column prop="email" label="邮箱" />
-      <el-table-column prop="role" label="角色" width="120" />
-      <el-table-column label="状态" width="120">
-        <template #default="{ row }">
-          <UserStatusSwitch :value="row.deleted === 0" @change="(status: boolean) => setStatus(row, status)" />
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="220">
-        <template #default="{ row }">
-          <el-button size="small" @click="openDetail(row)">详情</el-button>
-          <el-button size="small" type="warning" @click="resetPassword(row)">重置密码</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+    <!-- 用户列表 -->
+    <el-card style="margin-top: 20px;">
+      <el-table :data="users" stripe border v-loading="loading" style="width: 100%">
+        <el-table-column prop="id" label="ID" width="70" />
+        <el-table-column prop="username" label="用户名" width="120" />
+        <el-table-column prop="email" label="邮箱" width="180" />
+        
+        <el-table-column label="注册天数" width="100">
+          <template #default="{ row }">
+            <span>{{ row.registrationDays }} 天</span>
+          </template>
+        </el-table-column>
+        
+        <el-table-column label="完成率" width="100" sortable>
+          <template #default="{ row }">
+            <el-progress :percentage="safePercentage(row.completionRate)" :color="getCompletionColor(row.completionRate)" />
+          </template>
+        </el-table-column>
+        
+        <el-table-column label="任务统计" width="150">
+          <template #default="{ row }">
+            <el-tag type="info" effect="plain">完成: {{ row.completedTaskCount }}</el-tag>
+            <br />
+            <el-tag type="warning" effect="plain">未完成: {{ row.uncompletedTaskCount }}</el-tag>
+          </template>
+        </el-table-column>
+        
+        <el-table-column label="最后活跃时间" width="160" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ formatDate(row.lastActiveTime) }}
+          </template>
+        </el-table-column>
+        
+        <el-table-column label="账号状态" width="100">
+          <template #default="{ row }">
+            <el-switch
+              v-model="row.status"
+              :active-value="0"
+              :inactive-value="1"
+              @change="handleStatusChange(row)"
+            />
+            <el-tag :type="row.status === 0 ? 'success' : 'danger'">
+              {{ row.status === 0 ? '正常' : '禁用' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        
+        <el-table-column label="操作" width="280" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" type="primary" @click="openDetail(row)">详情</el-button>
+            <el-button size="small" type="info" @click="openAnalytics(row)">分析</el-button>
+            <el-button size="small" type="warning" @click="resetPassword(row)">重置密码</el-button>
+            <el-popconfirm title="确定禁用该用户?" confirm-button-text="确定" cancel-button-text="取消" @confirm="setStatus(row, false)">
+              <template #reference>
+                <el-button size="small" :type="row.status === 0 ? 'danger' : 'success'">
+                  {{ row.status === 0 ? '禁用' : '启用' }}
+                </el-button>
+              </template>
+            </el-popconfirm>
+          </template>
+        </el-table-column>
+      </el-table>
 
-    <Pagination :page="query.page" :page-size="query.size" :total="total" @change="onPageChange" />
+      <el-pagination
+        v-if="total > query.size"
+        :current-page="query.page"
+        :page-size="query.size"
+        :total="total"
+        layout="total, prev, pager, next, jumper"
+        @current-change="onPageChange"
+        style="margin-top: 20px; text-align: right;"
+      />
+    </el-card>
 
-    <UserDetailDialog v-if="detailUser" :user="detailUser" @close="detailUser = null" />
+    <!-- 用户详情抽屉 -->
+    <UserDetailDrawer v-if="selectedUser" :user="selectedUser" @close="selectedUser = null" />
+
+    <!-- 用户分析弹窗 -->
+    <UserAnalyticsDialog v-if="analyticsUser" :user="analyticsUser" @close="analyticsUser = null" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
-import SearchBar from '@/components/common/SearchBar.vue'
-import Pagination from '@/components/common/Pagination.vue'
-import UserStatusSwitch from '@/components/admin/UserStatusSwitch.vue'
-import UserDetailDialog from '@/components/admin/UserDetailDialog.vue'
-import { useAdminUserManageStore } from '@/store/admin/userManage'
+import { ref, reactive, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import UserDetailDrawer from '@/components/admin/UserDetailDrawer.vue'
+import UserAnalyticsDialog from '@/components/admin/UserAnalyticsDialog.vue'
+import * as userApi from '@/api/admin/userManage'
 
-const store = useAdminUserManageStore()
-const detailUser = ref(null as any)
+const route = useRoute()
 
-const query = reactive({ page: 1, size: 10, keyword: '', status: undefined as number | undefined })
+const query = reactive({
+  page: 1,
+  size: 10,
+  keyword: '',
+  status: undefined as number | undefined,
+  orderBy: undefined as string | undefined,
+  orderType: 'desc'
+})
 
 const users = ref<any[]>([])
 const total = ref(0)
 const loading = ref(false)
+const selectedUser = ref(null as any)
+const analyticsUser = ref(null as any)
 
 const loadUsers = async () => {
   loading.value = true
   try {
-    const { rows, total: t } = await store.loadUsers(query)
-    users.value = rows
-    total.value = t
+    const response = await userApi.getUserList(query as any)
+    // 响应拦截器已提取data，直接访问 rows 和 total
+    users.value = (response as any)?.rows || []
+    total.value = (response as any)?.total || 0
+  } catch (error: any) {
+    console.error('加载用户列表失败:', error)
+    ElMessage.error('加载用户列表失败：' + (error?.message || '请稍后重试'))
+    // 保持既往数据，不清空
+    if (!users.value.length) {
+      users.value = []
+      total.value = 0
+    }
   } finally {
     loading.value = false
   }
 }
 
-const onPageChange = async (page: number, size: number) => {
+const onPageChange = (page: number) => {
   query.page = page
-  query.size = size
-  await loadUsers()
+  loadUsers()
+}
+
+const resetFilters = () => {
+  query.keyword = ''
+  query.status = undefined
+  query.orderBy = undefined
+  query.orderType = 'desc'
+  query.page = 1
+  loadUsers()
 }
 
 const setStatus = async (row: any, active: boolean) => {
   const status = active ? 0 : 1
-  await store.updateStatus(row.id, status)
-  await loadUsers()
+  try {
+    await userApi.updateUserStatus(row.id, status)
+    ElMessage.success(active ? '用户已启用' : '用户已禁用')
+    await loadUsers()
+  } catch (error) {
+    ElMessage.error('更新状态失败')
+  }
+}
+
+const handleStatusChange = (row: any) => {
+  // row.status 已为 0 或 1
+  setStatus(row, row.status === 0)
 }
 
 const resetPassword = async (row: any) => {
-  await store.resetPassword(row.id)
-  ElMessage.success('密码已重置为默认密码')
+  try {
+    await ElMessageBox.confirm('确定要重置该用户密码吗？', '警告', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+    await userApi.resetUserPassword(row.id, '123456')
+    ElMessage.success('密码已重置为 123456')
+  } catch (error) {
+    console.error(error)
+  }
 }
 
 const openDetail = async (row: any) => {
-  detailUser.value = await store.loadUserDetail(row.id)
+  selectedUser.value = row
 }
 
-onMounted(loadUsers)
+const openAnalytics = async (row: any) => {
+  analyticsUser.value = row
+}
+
+const formatDate = (date: string | null) => {
+  if (!date) return '-'
+  return new Date(date).toLocaleString('zh-CN')
+}
+
+
+const safePercentage = (val: any) => {
+  const num = Number(val)
+  return isNaN(num) ? 0 : Math.round(num)
+}
+
+const getCompletionColor = (rate: number) => {
+  if (rate >= 80) return '#67C23A'
+  if (rate >= 50) return '#409EFF'
+  if (rate >= 20) return '#E6A23C'
+  return '#F56C6C'
+}
+
+onMounted(() => {
+  loadUsers()
+})
+
+// 监听路由变化，重新加载数据
+watch(() => route.fullPath, () => {
+  loadUsers()
+})
 </script>
 
 <style scoped>
-.tools { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.admin-user-manage {
+  padding: 20px;
+}
+
+.tools-section {
+  margin-bottom: 20px;
+}
+
+.el-table {
+  margin-top: 20px;
+}
 </style>
