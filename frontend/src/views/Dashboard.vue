@@ -55,6 +55,9 @@
     <ChartCard title="本周专注时长">
       <div id="focusChart" style="height: 300px"></div>
     </ChartCard>
+
+    <!-- AI 助手浮窗（仅普通用户显示，管理员不显示） -->
+    <AIChatAssistant v-if="userStore.user?.role !== 'admin'" />
   </div>
 </template>
 
@@ -64,6 +67,7 @@ import { useUserStore } from '@/store/user'
 import { useTaskStore } from '@/store/task'
 import ChartCard from '@/components/ChartCard.vue'
 import TaskItem from '@/components/TaskItem.vue'
+import AIChatAssistant from '@/components/user/AIChatAssistant.vue'
 import * as echarts from 'echarts'
 
 const userStore = useUserStore()

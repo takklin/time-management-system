@@ -9,9 +9,9 @@
       <div class="filters-sidebar">
         <div class="filter-group">
           <h3>分类</h3>
-          <el-checkbox-group v-model="selectedFilters.categories">
-            <el-checkbox v-for="cat in categories" :key="cat" :label="cat">{{ cat }}</el-checkbox>
-          </el-checkbox-group>
+          <el-select v-model="selectedFilters.categoryId" placeholder="选择分类" clearable @change="fetchTasksWithFilters">
+            <el-option v-for="cat in categories" :key="cat.id" :label="cat.name" :value="cat.id" />
+          </el-select>
         </div>
 
         <div class="filter-group">
@@ -53,8 +53,8 @@
           <el-input v-model="formData.title" placeholder="输入任务标题" />
         </el-form-item>
         <el-form-item label="分类">
-          <el-select v-model="formData.category" placeholder="选择分类">
-            <el-option v-for="cat in categories" :key="cat" :label="cat" :value="cat" />
+          <el-select v-model="formData.categoryId" placeholder="选择分类">
+            <el-option v-for="cat in categories" :key="cat.id" :label="cat.name" :value="cat.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="优先级">
@@ -83,60 +83,82 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useTaskStore } from '@/store/task'
 import { ElMessage } from 'element-plus'
 import TaskItem from '@/components/TaskItem.vue'
 
 const taskStore = useTaskStore()
-
-const categories = ref(['工作', '学习', '生活', '运动'])
+const categories = ref<any[]>([])
 const showDialog = ref(false)
 const editingTaskId = ref<number | null>(null)
 
+// 过滤器：categoryId、priority、status
 const selectedFilters = reactive({
-  categories: [] as string[],
+  categoryId: null as number | null,
   priority: [] as string[],
   status: 'all',
 })
 
+// 表单数据：categoryId
 const formData = reactive({
   title: '',
-  category: '',
+  categoryId: null as number | null,
   priority: 'medium' as const,
   deadline: null as any,
   estimatedTime: 0,
   description: '',
 })
 
+// 任务列表（已过滤）
 const filteredTasks = computed(() => {
-  let filtered = taskStore.tasks
-
-  if (selectedFilters.categories.length > 0) {
-    filtered = filtered.filter(t => selectedFilters.categories.includes(t.category))
-  }
-
+  let tasks = taskStore.tasks
+  // 本地过滤优先级
   if (selectedFilters.priority.length > 0) {
-    filtered = filtered.filter(t => selectedFilters.priority.includes(t.priority))
+    tasks = tasks.filter(t => selectedFilters.priority.includes(t.priority))
   }
-
+  // 本地过滤状态
   if (selectedFilters.status === 'active') {
-    filtered = filtered.filter(t => !t.completed)
+    tasks = tasks.filter(t => t.status === 0)
   } else if (selectedFilters.status === 'completed') {
-    filtered = filtered.filter(t => t.completed)
+    tasks = tasks.filter(t => t.status === 1)
   }
-
-  return filtered
+  // 分类过滤已由后端处理
+  return tasks
 })
 
+// 获取分类和任务
+const fetchCategories = async () => {
+  await taskStore.fetchCategories()
+  categories.value = taskStore.categories
+}
+
+const fetchTasksWithFilters = async () => {
+  await taskStore.fetchTasks({
+    categoryId: selectedFilters.categoryId,
+    priority: selectedFilters.priority,
+    status: selectedFilters.status,
+  })
+}
+
+// 监听过滤器变化
+watch(
+  () => [selectedFilters.categoryId, selectedFilters.priority, selectedFilters.status],
+  () => {
+    fetchTasksWithFilters()
+  },
+  { deep: true }
+)
+
 onMounted(async () => {
-  await taskStore.fetchTasks()
+  await fetchCategories()
+  await fetchTasksWithFilters()
 })
 
 const showCreateDialog = () => {
   editingTaskId.value = null
   formData.title = ''
-  formData.category = ''
+  formData.categoryId = null
   formData.priority = 'medium'
   formData.deadline = null
   formData.estimatedTime = 0
@@ -149,7 +171,10 @@ const saveTask = async () => {
     ElMessage.error('请输入任务标题')
     return
   }
-
+  if (!formData.categoryId) {
+    ElMessage.error('请选择分类')
+    return
+  }
   try {
     if (editingTaskId.value) {
       await taskStore.updateTask(editingTaskId.value, {
@@ -165,6 +190,7 @@ const saveTask = async () => {
       ElMessage.success('任务创建成功')
     }
     showDialog.value = false
+    await fetchTasksWithFilters()
   } catch (error) {
     ElMessage.error('操作失败')
   }
@@ -185,7 +211,7 @@ const deleteTask = (id: number | undefined) => {
 const editTask = (task: any) => {
   editingTaskId.value = task.id
   formData.title = task.title
-  formData.category = task.category
+  formData.categoryId = task.categoryId
   formData.priority = task.priority
   formData.deadline = task.deadline
   formData.estimatedTime = task.estimatedTime

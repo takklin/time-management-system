@@ -66,7 +66,9 @@ export function updateProfile(data: { email: string; nickname: string }) {
 
 /**
  * 用户登出
+ * 注意：logout 是客户端操作，只需清除本地 token，无需调用后端 API
  */
 export function logout() {
-  return service.post('/v1/auth/logout')
+  // 直接返回成功的 Promise，由前端处理 token 清除
+  return Promise.resolve()
 }

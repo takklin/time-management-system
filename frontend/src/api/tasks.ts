@@ -3,7 +3,8 @@ import service from '@/utils/request'
 export interface Task {
   id?: number
   title: string
-  category: string
+  categoryId: number | null
+  categoryName?: string
   priority: 'high' | 'medium' | 'low'
   deadline?: string
   estimatedTime?: number

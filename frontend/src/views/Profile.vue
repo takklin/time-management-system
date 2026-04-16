@@ -139,7 +139,16 @@ onMounted(async () => {
     formData.nickname = userStore.user?.nickname || ''
     const avatar = userStore.user?.avatar || ''
     if (avatar) {
-      userAvatar.value = avatar.startsWith('http') ? avatar : avatar
+      if (avatar.startsWith('http')) {
+        userAvatar.value = avatar
+      } else if (avatar.startsWith('/api/')) {
+        // 如果已包含 /api，直接使用（由代理转发）
+        userAvatar.value = avatar
+      } else {
+        // 其他情况拼接后端地址
+        const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
+        userAvatar.value = `${baseURL}${avatar}`
+      }
     }
     await fetchCategories()
   } catch (error) {

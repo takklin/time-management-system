@@ -16,7 +16,7 @@
         </el-input>
       </div>
 
-      <el-button type="link" @click="showNotifications">
+      <el-button type="primary" :text="true" @click="showNotifications">
         <el-icon><Bell /></el-icon>
         <el-badge :value="notificationCount" class="badge" />
       </el-button>
@@ -54,7 +54,21 @@ const notificationCount = ref(0)
 const userAvatar = computed(() => {
   const defaultAvatar = 'https://cube.elemecdn.com/0/88/03b0f476b6411127aa8e8b9be76153.jpeg'
   const avatar = userStore.user?.avatar || ''
-  return avatar ? (avatar.startsWith('http') ? avatar : avatar) : defaultAvatar
+  if (!avatar) {
+    return defaultAvatar
+  }
+  // 如果已经是完整 URL，直接返回
+  if (avatar.startsWith('http')) {
+    return avatar
+  }
+  // 如果是相对路径，需要检查是否已包含 /api
+  if (avatar.startsWith('/api/')) {
+    // 如果已经包含 /api，直接使用（由代理转发）
+    return avatar
+  }
+  // 其他情况拼接后端地址
+  const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
+  return `${baseURL}${avatar}`
 })
 
 const showNotifications = () => {
@@ -62,7 +76,7 @@ const showNotifications = () => {
 }
 
 const goToProfile = () => {
-  router.push('/profile')
+  router.push('/dashboard/profile')
 }
 
 const changePassword = () => {
