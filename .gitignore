@@ -34,3 +34,6 @@ AI_CONFIG_QUICK_INIT.sql
 AI_CONFIG_TROUBLESHOOT.md
 ai_config_setup.sql
 AI_CONFIG_QUICK_INIT.sql
+secrets.txt
+*.bfg-report/
+bfg.jar
