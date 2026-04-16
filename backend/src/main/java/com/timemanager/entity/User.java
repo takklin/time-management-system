@@ -18,6 +18,9 @@ public class User {
     private String nickname;
     private String avatar;
     private String role;
+    private LocalDateTime lastLoginTime;  // 最后登录时间
+    private String status;                // 账号状态: active/disabled
+    private Integer loginCount;           // 登录次数
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private Integer deleted;
