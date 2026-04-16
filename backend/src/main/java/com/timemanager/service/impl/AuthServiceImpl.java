@@ -49,6 +49,6 @@ public class AuthServiceImpl implements AuthService {
             throw new RuntimeException("密码错误");
         }
         String token = JwtUtil.generateToken(user.getId());
-        return new LoginVO(token, user);
+        return LoginVO.fromUser(token, user);
     }
 }

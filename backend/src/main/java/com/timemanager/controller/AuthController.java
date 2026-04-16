@@ -3,6 +3,7 @@ package com.timemanager.controller;
 import com.timemanager.common.result.Result;
 import com.timemanager.dto.LoginDTO;
 import com.timemanager.service.AuthService;
+import com.timemanager.service.OperationLogService;
 import com.timemanager.vo.LoginVO;
 import com.timemanager.entity.User;
 import com.timemanager.mapper.UserMapper;
@@ -15,6 +16,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
+import javax.servlet.http.HttpServletRequest;
 
 import java.net.MalformedURLException;
 import java.nio.file.Path;
@@ -34,9 +36,64 @@ public class AuthController {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
+    @Autowired
+    private OperationLogService operationLogService;
+
     @PostMapping("/login")
-    public Result<LoginVO> login(@RequestBody LoginDTO dto) {
-        return Result.success(authService.login(dto));
+    public Result<LoginVO> login(@RequestBody LoginDTO dto, HttpServletRequest request) {
+        try {
+            LoginVO loginVO = authService.login(dto);
+            
+            // 获取请求 IP 和 User-Agent
+            String ip = getClientIp(request);
+            String userAgent = request.getHeader("User-Agent");
+            
+            // 获取登录用户名
+            String username = dto.getUsername() != null ? dto.getUsername() : dto.getEmail();
+            
+            // 记录登录成功
+            operationLogService.recordOperation(
+                username,
+                "LOGIN",
+                "User:" + loginVO.getUser().getId(),
+                "SUCCESS"
+            );
+            
+            return Result.success(loginVO);
+        } catch (Exception e) {
+            // 获取请求 IP 和 User-Agent
+            String ip = getClientIp(request);
+            String userAgent = request.getHeader("User-Agent");
+            String username = dto.getUsername() != null ? dto.getUsername() : (dto.getEmail() != null ? dto.getEmail() : "unknown");
+            
+            // 记录登录失败
+            operationLogService.recordOperation(
+                username,
+                "LOGIN",
+                "User:unknown",
+                "FAILURE: " + e.getMessage()
+            );
+            
+            throw e;
+        }
+    }
+
+    /**
+     * 获取客户端真实 IP 地址
+     */
+    private String getClientIp(HttpServletRequest request) {
+        String ip = request.getHeader("X-Forwarded-For");
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getHeader("X-Real-IP");
+        }
+        if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+            ip = request.getRemoteAddr();
+        }
+        // 如果是多个 IP，取第一个
+        if (ip != null && ip.contains(",")) {
+            ip = ip.split(",")[0].trim();
+        }
+        return ip;
     }
 
     @PostMapping("/change-password")
@@ -147,11 +204,16 @@ public class AuthController {
         newUser.setUsername(dto.getUsername());
         newUser.setPassword(passwordEncoder.encode(dto.getPassword()));
         newUser.setEmail(dto.getEmail());
+        // 默认普通用户；如果用户名是 admin 则自动赋 admin 角色（可根据业务改成配置或管理员审批）
+        newUser.setRole("user");
+        if ("admin".equalsIgnoreCase(dto.getUsername())) {
+            newUser.setRole("admin");
+        }
         newUser.setCreatedAt(LocalDateTime.now());
         newUser.setUpdatedAt(LocalDateTime.now());
-        
+
         userMapper.insert(newUser);
-        
+
         // Auto login after registration
         return Result.success(authService.login(dto));
     }
@@ -181,27 +243,64 @@ public class AuthController {
     }
 
     @GetMapping("/avatar/{filename:.+}")
-    public ResponseEntity<Resource> serveAvatar(@PathVariable String filename) {
+    public ResponseEntity<?> serveAvatar(@PathVariable String filename) {
         try {
             Path uploadsPath = Paths.get("uploads").toAbsolutePath().normalize();
             Path filePath = uploadsPath.resolve(filename).normalize();
             Resource resource = new UrlResource(filePath.toUri());
-            if (!resource.exists() || !resource.isReadable()) {
-                return ResponseEntity.notFound().build();
+            
+            // 如果文件存在且可读，返回文件
+            if (resource.exists() && resource.isReadable()) {
+                String contentType = "image/jpeg";
+                if (filename.toLowerCase().endsWith("png")) {
+                    contentType = "image/png";
+                } else if (filename.toLowerCase().endsWith("gif")) {
+                    contentType = "image/gif";
+                } else if (filename.toLowerCase().endsWith("webp")) {
+                    contentType = "image/webp";
+                }
+                return ResponseEntity.ok()
+                        .contentType(MediaType.parseMediaType(contentType))
+                        .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + filename + "\"")
+                        .body(resource);
             }
-            String contentType = "image/jpeg";
-            if (filename.toLowerCase().endsWith("png")) {
-                contentType = "image/png";
-            } else if (filename.toLowerCase().endsWith("gif")) {
-                contentType = "image/gif";
-            } else if (filename.toLowerCase().endsWith("webp")) {
-                contentType = "image/webp";
-            }
+            
+            // 文件不存在时，返回生成的占位符图像
+            java.awt.image.BufferedImage bufferedImage = new java.awt.image.BufferedImage(
+                    200, 200, java.awt.image.BufferedImage.TYPE_INT_RGB);
+            java.awt.Graphics2D g2d = bufferedImage.createGraphics();
+            
+            // 使用灰色背景
+            g2d.setColor(new java.awt.Color(200, 200, 200));
+            g2d.fillRect(0, 0, 200, 200);
+            
+            // 绘制边界
+            g2d.setColor(new java.awt.Color(150, 150, 150));
+            g2d.setStroke(new java.awt.BasicStroke(2));
+            g2d.drawRect(1, 1, 198, 198);
+            
+            // 绘制文字 "No Image"
+            g2d.setColor(new java.awt.Color(100, 100, 100));
+            g2d.setFont(new java.awt.Font("Arial", java.awt.Font.PLAIN, 14));
+            java.awt.FontMetrics fm = g2d.getFontMetrics();
+            String text = "No Image";
+            int textX = (200 - fm.stringWidth(text)) / 2;
+            int textY = (200 - fm.getHeight()) / 2 + fm.getAscent();
+            g2d.drawString(text, textX, textY);
+            
+            g2d.dispose();
+            
+            // 编码为 PNG 格式
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            javax.imageio.ImageIO.write(bufferedImage, "png", baos);
+            byte[] imageData = baos.toByteArray();
+            
             return ResponseEntity.ok()
-                    .contentType(MediaType.parseMediaType(contentType))
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + filename + "\"")
-                    .body(resource);
-        } catch (MalformedURLException e) {
+                    .contentType(MediaType.IMAGE_PNG)
+                    .contentLength(imageData.length)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"placeholder.png\"")
+                    .body(imageData);
+        } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }

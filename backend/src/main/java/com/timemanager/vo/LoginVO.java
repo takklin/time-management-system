@@ -8,5 +8,9 @@ import lombok.Data;
 @AllArgsConstructor
 public class LoginVO {
     private String token;
-    private User user;
+    private UserVO user;
+
+    public static LoginVO fromUser(String token, User user) {
+        return new LoginVO(token, UserVO.fromUser(user));
+    }
 }

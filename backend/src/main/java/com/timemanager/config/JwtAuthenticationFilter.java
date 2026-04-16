@@ -17,7 +17,9 @@ import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
 
 import org.springframework.stereotype.Component;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
@@ -40,36 +42,42 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     throw new IllegalArgumentException("UserId missing in token");
                 }
                 request.setAttribute("userId", userId);
+                log.debug("[JWT认证] 解析成功：userId={}", userId);
 
                 User user = userMapper.selectById(userId);
+                String role;
                 UserDetails userDetails;
                 if (user == null) {
                     // 兼容：token 解析成功，用户可能刚创建但查询异常、或数据不一致。
+                    log.warn("[JWT认证] 用户ID在数据库中不存在：userId={}, 使用默认USER角色", userId);
+                    role = "USER";
                     userDetails = org.springframework.security.core.userdetails.User
                             .withUsername("user-" + userId)
                             .password("")
-                            .authorities("USER")
+                            .authorities("ROLE_USER")
                             .build();
                 } else {
-                    String role = user.getRole() != null ? user.getRole().toUpperCase() : "USER";
+                    role = user.getRole() != null ? user.getRole().toUpperCase() : "USER";
                     userDetails = org.springframework.security.core.userdetails.User
                             .withUsername(user.getUsername())
                             .password(user.getPassword())
-                            .authorities(role)
+                            .authorities("ROLE_" + role)
                             .build();
+                    log.debug("[JWT认证] 用户认证成功：userId={}, username={}, role={}", userId, user.getUsername(), role);
                 }
+                // 保存到 request 属性，供 Controller 使用
+                request.setAttribute("role", role);
                 UsernamePasswordAuthenticationToken authentication =
                         new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
                 authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             } catch (Exception e) {
+                // 对于无效的 token，记录错误并清除上下文
+                log.warn("[JWT认证] Token 认证失败，原因：{}", e.getMessage());
                 SecurityContextHolder.clearContext();
-                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-                response.setContentType("application/json;charset=UTF-8");
-                response.getWriter().write("{\"code\":401,\"msg\":\"Unauthorized\",\"data\":null}");
-                return;
             }
         }
+        // 继续过滤链，让 SecurityConfig 的 permitAll 规则处理不需要认证的请求
         filterChain.doFilter(request, response);
     }
 }

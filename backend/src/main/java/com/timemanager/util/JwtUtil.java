@@ -25,4 +25,20 @@ public class JwtUtil {
                 .getSubject();
         return Long.valueOf(sub);
     }
+
+    /**
+     * 从 Token 中解析用户名（从用户表查询）
+     * 由于 JWT only stores userId，这里需要从数据库查询用户名
+     * 为了简化，直接返回 userId 作为备用
+     */
+    public static String parseUsername(String token) {
+        try {
+            Long userId = parseUserId(token);
+            // TODO: 可以从数据库查询真实的用户名，现在返回 userId 作为备用
+            // 实际应该注入 UserMapper 从数据库查询
+            return String.valueOf(userId);
+        } catch (Exception e) {
+            return null;
+        }
+    }
 }
