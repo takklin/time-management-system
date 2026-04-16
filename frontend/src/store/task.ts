@@ -5,7 +5,8 @@ import { getTasks, getCategories, createTask as apiCreateTask, updateTask as api
 export interface Task {
   id?: number
   title: string
-  category: string
+  categoryId: number | null
+  categoryName?: string
   priority: 'high' | 'medium' | 'low'
   deadline?: string
   estimatedTime?: number
@@ -30,10 +31,10 @@ export const useTaskStore = defineStore('task', () => {
     status: 'all',
   })
 
-  async function fetchTasks() {
+  async function fetchTasks(filters?: any) {
     loading.value = true
     try {
-      const response = await getTasks()
+      const response = await getTasks(filters)
       tasks.value = response.data || response
     } finally {
       loading.value = false

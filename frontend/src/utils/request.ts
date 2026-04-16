@@ -29,7 +29,7 @@ service.interceptors.request.use(
 service.interceptors.response.use(
   (response: AxiosResponse) => {
     const { data } = response
-    // 假设后端返回的数据结构为 { code, message, data }
+    // 假设后端返回的数据结构为 { code, msg, data }
     if (data.code === 200) {
       return data.data || data
     } else if (data.code === 401) {
@@ -41,9 +41,14 @@ service.interceptors.response.use(
         window.location.href = '/login'
       }
       return Promise.reject(new Error('Unauthorized'))
+    } else if (data.code === 403) {
+      // 权限不足
+      ElMessage.error(data.msg || '权限不足，无法访问该接口')
+      return Promise.reject(new Error(data.msg || '权限不足'))
     } else {
-      ElMessage.error(data.message || '请求失败')
-      return Promise.reject(new Error(data.message))
+      // 其他业务错误
+      ElMessage.error(data.msg || data.message || '请求失败')
+      return Promise.reject(new Error(data.msg || data.message))
     }
   },
   (error) => {

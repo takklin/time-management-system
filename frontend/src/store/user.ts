@@ -25,6 +25,9 @@ export const useUserStore = defineStore('user', () => {
     try {
       const response: any = await login({ username, password })
       token.value = response.token
+      if (response.user) {
+        response.user.role = response.user.role?.toLowerCase()
+      }
       user.value = response.user
       saveToken(response.token)
       return response
@@ -51,6 +54,9 @@ export const useUserStore = defineStore('user', () => {
     loading.value = true
     try {
       const response: any = await getCurrentUser()
+      if (response) {
+        response.role = response.role?.toLowerCase()
+      }
       user.value = response
     } finally {
       loading.value = false

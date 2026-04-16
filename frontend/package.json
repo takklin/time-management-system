@@ -12,6 +12,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@element-plus/icons-vue": "^2.1.0",
     "axios": "^1.13.6",
     "dayjs": "^1.11.20",
     "echarts": "^6.0.0",
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.5",
+    "sass-embedded": "^1.99.0",
     "vite": "^8.0.2",
     "vue-tsc": "^3.2.6"
   }
