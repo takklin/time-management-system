@@ -12,9 +12,9 @@
 -- Base URL: https://api.chatanywhere.tech/v1
 -- Model: gpt-3.5-turbo
 INSERT INTO ai_config (provider, api_key, base_url, model, max_tokens, temperature, is_active, updated_at) 
-VALUES ('chatgpt3.5', '***REMOVED***', 'https://api.chatanywhere.tech/v1', 'gpt-3.5-turbo', 2000, 0.7, 1, NOW())
+VALUES ('chatgpt3.5', 'sk-请替换为你的真实密钥', 'https://api.chatanywhere.tech/v1', 'gpt-3.5-turbo', 2000, 0.7, 1, NOW())
 ON DUPLICATE KEY UPDATE
-  api_key = '***REMOVED***',
+  api_key = 'sk-请替换为你的真实密钥',
   base_url = 'https://api.chatanywhere.tech/v1',
   model = 'gpt-3.5-turbo',
   max_tokens = 2000,
@@ -26,9 +26,9 @@ ON DUPLICATE KEY UPDATE
 -- 说明: 使用同一个 ChatAnywhere API 端点，但指定 deepseek-chat 模型
 -- 这样可以用同一个 API Key 支持多个模型
 INSERT INTO ai_config (provider, api_key, base_url, model, max_tokens, temperature, is_active, updated_at) 
-VALUES ('deepseek', '***REMOVED***', 'https://api.chatanywhere.tech/v1', 'deepseek-chat', 2000, 0.7, 1, NOW())
+VALUES ('deepseek', 'sk-请替换为你的真实密钥', 'https://api.chatanywhere.tech/v1', 'deepseek-chat', 2000, 0.7, 1, NOW())
 ON DUPLICATE KEY UPDATE
-  api_key = '***REMOVED***',
+  api_key = 'sk-请替换为你的真实密钥',
   base_url = 'https://api.chatanywhere.tech/v1',
   model = 'deepseek-chat',
   max_tokens = 2000,

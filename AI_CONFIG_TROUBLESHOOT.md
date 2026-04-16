@@ -66,9 +66,9 @@ CREATE TABLE IF NOT EXISTS `ai_config` (
 
 -- 插入 ChatGPT3.5 配置
 INSERT INTO ai_config (provider, api_key, base_url, model, max_tokens, temperature, is_active, updated_at) 
-VALUES ('chatgpt3.5', '***REMOVED***', 'https://api.chatanywhere.tech/v1', 'gpt-3.5-turbo', 2000, 0.7, 1, NOW())
+VALUES ('chatgpt3.5', 'sk-请替换为你的真实密钥', 'https://api.chatanywhere.tech/v1', 'gpt-3.5-turbo', 2000, 0.7, 1, NOW())
 ON DUPLICATE KEY UPDATE
-  api_key = '***REMOVED***',
+  api_key = 'sk-请替换为你的真实密钥',
   base_url = 'https://api.chatanywhere.tech/v1',
   model = 'gpt-3.5-turbo',
   is_active = 1,
@@ -76,9 +76,9 @@ ON DUPLICATE KEY UPDATE
 
 -- 插入 DeepSeek 配置
 INSERT INTO ai_config (provider, api_key, base_url, model, max_tokens, temperature, is_active, updated_at) 
-VALUES ('deepseek', '***REMOVED***', 'https://api.chatanywhere.tech/v1', 'deepseek-chat', 2000, 0.7, 1, NOW())
+VALUES ('deepseek', 'sk-请替换为你的真实密钥', 'https://api.chatanywhere.tech/v1', 'deepseek-chat', 2000, 0.7, 1, NOW())
 ON DUPLICATE KEY UPDATE
-  api_key = '***REMOVED***',
+  api_key = 'sk-请替换为你的真实密钥',
   base_url = 'https://api.chatanywhere.tech/v1',
   model = 'deepseek-chat',
   is_active = 1,
@@ -208,7 +208,7 @@ POST /api/v1/admin/ai-config/switch/{provider}
 
 ```bash
 curl -X GET "https://api.chatanywhere.tech/v1/models" \
-  -H "Authorization: Bearer ***REMOVED***"
+  -H "Authorization: Bearer sk-请替换为你的真实密钥"
 ```
 
 如果返回 401，说明 API Key 不对，需要替换为你的真实 Key。
