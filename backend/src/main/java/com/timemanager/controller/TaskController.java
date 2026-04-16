@@ -18,12 +18,13 @@ public class TaskController {
     private Long currentUserId() { return com.timemanager.util.UserUtil.getCurrentUserId(); }
 
     @GetMapping
-    public Result<List<Task>> list() {
+    public Result<List<Task>> list(@RequestParam(required = false) Long categoryId) {
         Long userId = currentUserId();
         if (userId == null) {
             return Result.error(401, "Unauthorized");
         }
-        return Result.success(taskService.list(userId));
+        List<Task> tasks = taskService.listWithCategory(userId, categoryId);
+        return Result.success(tasks);
     }
 
     @GetMapping("/{id}")

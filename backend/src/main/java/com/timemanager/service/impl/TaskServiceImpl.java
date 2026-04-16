@@ -23,6 +23,15 @@ public class TaskServiceImpl implements TaskService {
     }
 
     @Override
+    public List<Task> listWithCategory(Long userId, Long categoryId) {
+        if (categoryId == null) {
+            return taskMapper.selectWithCategoryName(userId);
+        } else {
+            return taskMapper.selectWithCategoryNameByCategory(userId, categoryId);
+        }
+    }
+
+    @Override
     public Task getById(Long id) {
         return taskMapper.selectById(id);
     }

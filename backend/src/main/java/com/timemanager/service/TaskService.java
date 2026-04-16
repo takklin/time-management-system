@@ -5,6 +5,7 @@ import java.util.List;
 
 public interface TaskService {
     List<Task> list(Long userId);
+    List<Task> listWithCategory(Long userId, Long categoryId);
     Task getById(Long id);
     void create(Task task);
     void update(Task task);
