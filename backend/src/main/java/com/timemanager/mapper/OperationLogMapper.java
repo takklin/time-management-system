@@ -3,63 +3,58 @@ package com.timemanager.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.timemanager.entity.OperationLog;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.time.LocalDateTime;
 
-/**
- * 操作日志 Mapper
- * 用于查询和分析系统操作，支持异常检测
- */
 @Mapper
 public interface OperationLogMapper extends BaseMapper<OperationLog> {
-    
-    /**
-     * 查询最近 N 分钟内特定操作的记录数
-     */
+
+    @Select("SELECT * FROM operation_log WHERE deleted=0 AND user_id = #{userId} ORDER BY created_at DESC LIMIT #{offset}, #{limit}")
+    List<OperationLog> selectByUserId(@Param("userId") Long userId, @Param("offset") int offset, @Param("limit") int limit);
+
+    @Select("SELECT COUNT(*) FROM operation_log WHERE deleted=0 AND user_id = #{userId}")
+    int countByUserId(@Param("userId") Long userId);
+
+    // 兼容旧表中使用 operator 字段（存储用户名/操作者）
+    @Select("SELECT * FROM operation_log WHERE operator = #{operator} ORDER BY created_at DESC LIMIT #{offset}, #{limit}")
+    List<OperationLog> selectByOperator(@Param("operator") String operator, @Param("offset") int offset, @Param("limit") int limit);
+
+    @Select("SELECT COUNT(*) FROM operation_log WHERE operator = #{operator}")
+    int countByOperator(@Param("operator") String operator);
+
     @Select("SELECT COUNT(*) FROM operation_log WHERE action = #{action} AND created_at >= DATE_SUB(NOW(), INTERVAL #{minutes} MINUTE)")
-    int countActionInLastMinutes(String action, int minutes);
-    
-    /**
-     * 查询最近 N 分钟内特定操作和结果的记录数
-     */
+    int countActionInLastMinutes(@Param("action") String action, @Param("minutes") int minutes);
+
     @Select("SELECT COUNT(*) FROM operation_log WHERE action = #{action} AND result = #{result} AND created_at >= DATE_SUB(NOW(), INTERVAL #{minutes} MINUTE)")
-    int countActionResultInLastMinutes(String action, String result, int minutes);
-    
-    /**
-     * 查询最近 N 分钟内登录失败的记录
-     */
+    int countActionResultInLastMinutes(@Param("action") String action, @Param("result") String result, @Param("minutes") int minutes);
+
     @Select("SELECT * FROM operation_log WHERE action = 'LOGIN' AND result = 'FAIL' AND created_at >= DATE_SUB(NOW(), INTERVAL #{minutes} MINUTE) ORDER BY created_at DESC")
-    List<OperationLog> getFailedLoginInLastMinutes(int minutes);
-    
-    /**
-     * 查询最近 N 分钟内删除操作的记录
-     */
+    List<OperationLog> getFailedLoginInLastMinutes(@Param("minutes") int minutes);
+
     @Select("SELECT * FROM operation_log WHERE action = 'DELETE' AND created_at >= DATE_SUB(NOW(), INTERVAL #{minutes} MINUTE) ORDER BY created_at DESC")
-    List<OperationLog> getDeleteOperationsInLastMinutes(int minutes);
-    
-    /**
-     * 查询特定用户最近 N 分钟内的操作次数
-     */
+    List<OperationLog> getDeleteOperationsInLastMinutes(@Param("minutes") int minutes);
+
     @Select("SELECT COUNT(*) FROM operation_log WHERE operator = #{operator} AND created_at >= DATE_SUB(NOW(), INTERVAL #{minutes} MINUTE)")
-    int countUserActionsInLastMinutes(String operator, int minutes);
-    
-    /**
-     * 查询最近 N 分钟内按操作类型分组的统计
-     */
+    int countUserActionsInLastMinutes(@Param("operator") String operator, @Param("minutes") int minutes);
+
     @Select("SELECT action, result, COUNT(*) as count FROM operation_log WHERE created_at >= DATE_SUB(NOW(), INTERVAL #{minutes} MINUTE) GROUP BY action, result")
-    List<Map<String, Object>> groupActionsByTypeInLastMinutes(int minutes);
-    
-    /**
-     * 查询最近 N 天内的操作记录总数
-     */
+    List<Map<String, Object>> groupActionsByTypeInLastMinutes(@Param("minutes") int minutes);
+
     @Select("SELECT COUNT(*) FROM operation_log WHERE created_at >= DATE_SUB(NOW(), INTERVAL #{days} DAY)")
-    int countOperationsInLastDays(int days);
-    
-    /**
-     * 查询最近 N 天内失败操作的统计
-     */
+    int countOperationsInLastDays(@Param("days") int days);
+
     @Select("SELECT COUNT(*) FROM operation_log WHERE result = 'FAIL' AND created_at >= DATE_SUB(NOW(), INTERVAL #{days} DAY)")
-    int countFailureInLastDays(int days);
+    int countFailureInLastDays(@Param("days") int days);
+
+    @Select("SELECT COUNT(DISTINCT operator) FROM operation_log WHERE action = 'login_success' AND created_at >= #{start} AND created_at <= #{end}")
+    int countDistinctLoginSuccessOperators(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
+
+        @Select("SELECT ip, COUNT(*) as count FROM operation_log " +
+            "WHERE (action = 'login_failed' OR (LOWER(action) = 'login' AND LOWER(result) IN ('fail','failed'))) " +
+            "AND created_at > #{since} " +
+            "GROUP BY ip HAVING COUNT(*) >= 5")
+        List<Map<String, Object>> selectFailedLoginIps(@Param("since") LocalDateTime since);
 }

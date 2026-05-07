@@ -35,7 +35,7 @@ CREATE TABLE `task` (
   `title` VARCHAR(200) NOT NULL,
   `description` TEXT,
   `priority` ENUM('high','medium','low') DEFAULT 'medium',
-  `deadline` DATETIME,
+  `start_time` DATETIME,
   `estimated_minutes` INT,
   `actual_minutes` INT DEFAULT 0,
   `status` TINYINT(1) DEFAULT 0,
