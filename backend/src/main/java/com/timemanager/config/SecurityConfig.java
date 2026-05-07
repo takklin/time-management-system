@@ -24,6 +24,8 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import java.util.Arrays;
+import org.springframework.http.HttpMethod;
+import org.springframework.beans.factory.annotation.Value;
 
 @Configuration
 @EnableWebSecurity
@@ -81,6 +83,9 @@ public class SecurityConfig {
     @Autowired
     private JwtAuthenticationFilter jwtAuthenticationFilter;
 
+    @Value("${app.dev-mode:false}")
+    private boolean devMode;
+
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
@@ -95,8 +100,16 @@ public class SecurityConfig {
                 .authorizeRequests()
                 .antMatchers("/api/v1/auth/**").permitAll()
                 // User endpoints - require authentication
-                .antMatchers("/api/v1/user/**").authenticated()
-                // Admin endpoints - require ADMIN role (moved before authenticated)
+                .antMatchers("/api/v1/user/**").authenticated();
+
+        // 在开发模式下，允许匿名访问部分接口以便本地调试（仅限 /api/v1/admin/system/** 和 可读的时间记录）
+        if (devMode) {
+            // 开发模式不再默认放宽对核心接口的权限，为安全起见仅保留必要的调试入口
+            // 注意：time-records 接口现在仍需要认证（恢复默认行为）
+        }
+
+        http.authorizeRequests()
+                // Admin endpoints - require ADMIN role
                 .antMatchers("/api/v1/admin/**").hasRole("ADMIN")
                 .antMatchers("/api/admin/**").hasRole("ADMIN")
                 // All other requests require authentication

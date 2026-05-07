@@ -34,6 +34,9 @@ public class AuthController {
     private UserMapper userMapper;
 
     @Autowired
+    private com.timemanager.service.CategoryService categoryService;
+
+    @Autowired
     private PasswordEncoder passwordEncoder;
 
     @Autowired
@@ -213,6 +216,33 @@ public class AuthController {
         newUser.setUpdatedAt(LocalDateTime.now());
 
         userMapper.insert(newUser);
+
+        // 如果注册请求中包含 categories，则为新用户批量创建分类
+        try {
+            if (dto.getCategories() != null && !dto.getCategories().isEmpty()) {
+                org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(AuthController.class);
+                logger.debug("Register: creating {} categories for new user {}", dto.getCategories().size(), newUser.getId());
+                for (com.timemanager.dto.CategoryDTO c : dto.getCategories()) {
+                    if (c == null || c.getName() == null || c.getName().trim().isEmpty()) continue;
+                    com.timemanager.entity.Category category = new com.timemanager.entity.Category();
+                    category.setUserId(newUser.getId());
+                    category.setName(c.getName());
+                    category.setColor(c.getColor());
+                    category.setCreatedAt(LocalDateTime.now());
+                    category.setUpdatedAt(LocalDateTime.now());
+                    category.setDeleted(0);
+                    try {
+                        categoryService.create(category);
+                    } catch (Exception e) {
+                        // 记录单个分类创建失败，但不影响注册
+                        logger.error("Failed to create category {} for user {}: {}", c.getName(), newUser.getId(), e.getMessage(), e);
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            // 不影响主流程：分类创建失败时仅记录日志
+            ex.printStackTrace();
+        }
 
         // Auto login after registration
         return Result.success(authService.login(dto));
