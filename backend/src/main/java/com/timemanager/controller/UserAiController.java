@@ -1,6 +1,8 @@
 package com.timemanager.controller;
 
 import com.timemanager.ai.service.UserAiService;
+import java.util.Map;
+import java.util.List;
 import com.timemanager.common.result.Result;
 import com.timemanager.util.UserUtil;
 import lombok.Data;
@@ -69,6 +71,22 @@ public class UserAiController {
         String suggestions = userAiService.generateTaskSuggestions(request.getMainTask());
         return Result.success(suggestions);
     }
+
+    /**
+     * 增强对话：接收前端传入的结构化上下文（例如 todo 列表摘要），后端将上下文拼接到 prompt 中并调用 LLM
+     */
+    @PostMapping("/promote")
+    public Result<Object> promote(@RequestBody PromoteRequest request, HttpServletRequest httpRequest) {
+        // 只允许普通用户访问
+        Object roleObj = httpRequest.getAttribute("role");
+        String role = roleObj != null ? roleObj.toString() : null;
+        if (role == null || role.equalsIgnoreCase("ADMIN")) {
+            return Result.error(403, "仅普通用户可用该接口");
+        }
+        Long userId = UserUtil.getCurrentUserId();
+        Map<String, Object> resp = userAiService.promote(userId, request.getMessages(), request.getQuestion(), request.getContext(), request.getModel());
+        return Result.success(resp);
+    }
     
     // 请求对象
     @Data
@@ -85,5 +103,13 @@ public class UserAiController {
     @Data
     public static class TaskSuggestionRequest {
         private String mainTask;
+    }
+
+    @Data
+    public static class PromoteRequest {
+        private String question;
+        private Map<String, Object> context;
+        private String model;
+        private List<Map<String, Object>> messages;
     }
 }

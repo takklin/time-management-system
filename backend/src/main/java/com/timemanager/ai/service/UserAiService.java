@@ -12,6 +12,8 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.Map;
 
 /**
  * 用户 AI 服务
@@ -79,6 +81,183 @@ public class UserAiService {
         
         // 如果指定了模型则使用指定模型，否则使用默认激活的
         return dynamicAiService.chat(systemPrompt, message, model);
+    }
+
+    /**
+     * 增强对话：接收前端传入的上下文（结构化）以及会话历史，将其格式化并插入到用户消息中，再调用 DynamicAiService
+     * 要求 LLM 尽量返回纯 JSON 格式，格式示例：
+     * {
+     *   "type": "answer" | "create_task" | "create_schedule",
+     *   "content": "可读文本回复",
+     *   "data": { ... 结构化数据 ... }
+     * }
+     * 如果 LLM 返回无法解析为 JSON，则会回退为 { type: 'answer', content: 原始回复 }
+     *
+     * @param userId 用户ID
+     * @param messages 会话历史（按时间顺序）
+     * @param question 用户的原始问题
+     * @param context 前端传入的上下文（可为 null）
+     * @param model 可选的模型提供商
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    public Map<String, Object> promote(Long userId, List<Map<String, Object>> messages, String question, Map<String, Object> context, String model) {
+        String intent = detectUserIntent(question);
+
+        String systemPrompt = """
+            你是一个超级聪慧的个人时间管理助手，专门帮助用户高效管理任务和时间。
+
+            输出格式要求：
+            - 必须返回有效的 JSON（不要包含其它多余的文字），JSON 结构如下：
+            {
+              "type": "answer" | "create_task" | "create_schedule",
+              "content": "对用户的可读回复（简洁）",
+              "data": { ... 可选的结构化字段 ... }
+            }
+
+            当 "type" 为 "create_task" 时，"data" 应包含以下字段（若未知可置为 null）：
+            - title: 任务标题
+            - deadline: ISO 格式时间字符串或 null
+            - startTime: ISO 格式时间字符串或 null
+            - estimatedMinutes: 预估分钟数或 null
+            - categoryName: 分类名或 null
+            - description: 任务描述或空字符串
+
+            当 "type" 为 "create_schedule" 时，"data" 应包含：
+            - title, startTime, endTime, reminderTime(分钟), description
+
+            如果无法满足创建操作，请返回 type 为 "answer" 并在 content 中给出建议。
+
+            【交互风格】：保持友善并直接给出可执行的下一步。
+            """ + "\n检测意图:" + intent + "\n用户ID:" + userId + "\n当前时间:" + LocalDateTime.now();
+
+        StringBuilder userMsgBuilder = new StringBuilder();
+
+        // 附加最近的会话历史（最多 recent 12 条）
+        if (messages != null && !messages.isEmpty()) {
+            int from = Math.max(0, messages.size() - 12);
+            userMsgBuilder.append("=== 最近会话历史（最近优先） ===\n");
+            for (int i = from; i < messages.size(); i++) {
+                Map msg = messages.get(i);
+                Object role = msg.get("role");
+                Object content = msg.get("content");
+                userMsgBuilder.append(role == null ? "?" : role.toString()).append(": ");
+                userMsgBuilder.append(content == null ? "" : content.toString()).append("\n");
+            }
+            userMsgBuilder.append("=== 会话历史结束 ===\n\n");
+        }
+
+        userMsgBuilder.append("用户问题: ").append(question).append("\n\n");
+
+        if (context != null && !context.isEmpty()) {
+            userMsgBuilder.append("=== 前端传入的上下文开始 ===\n");
+
+            Object highObj = context.get("high_priority_tasks");
+            if (highObj instanceof List) {
+                userMsgBuilder.append("高优任务:\n");
+                for (Object item : (List) highObj) {
+                    if (item instanceof Map) {
+                        Map map = (Map) item;
+                        Object title = map.get("title");
+                        Object deadline = map.get("deadline");
+                        Object est = map.get("estimatedMinutes");
+                        userMsgBuilder.append("- ").append(title == null ? "(无标题)" : title.toString());
+                        if (deadline != null) userMsgBuilder.append(" 截止:").append(deadline.toString());
+                        if (est != null) userMsgBuilder.append(" 预估:").append(est.toString()).append("分");
+                        userMsgBuilder.append("\n");
+                    }
+                }
+            }
+
+            Object mediumObj = context.get("medium_priority_tasks");
+            if (mediumObj instanceof List) {
+                userMsgBuilder.append("中优任务:\n");
+                for (Object item : (List) mediumObj) {
+                    if (item instanceof Map) {
+                        Map map = (Map) item;
+                        Object title = map.get("title");
+                        Object deadline = map.get("deadline");
+                        Object est = map.get("estimatedMinutes");
+                        userMsgBuilder.append("- ").append(title == null ? "(无标题)" : title.toString());
+                        if (deadline != null) userMsgBuilder.append(" 截止:").append(deadline.toString());
+                        if (est != null) userMsgBuilder.append(" 预估:").append(est.toString()).append("分");
+                        userMsgBuilder.append("\n");
+                    }
+                }
+            }
+
+            Object procObj = context.get("procrastinate_tasks");
+            if (procObj instanceof List) {
+                userMsgBuilder.append("可拖延鱼塘（低优）:\n");
+                for (Object item : (List) procObj) {
+                    if (item instanceof Map) {
+                        Map map = (Map) item;
+                        Object title = map.get("title");
+                        Object deadline = map.get("deadline");
+                        userMsgBuilder.append("- ").append(title == null ? "(无标题)" : title.toString());
+                        if (deadline != null) userMsgBuilder.append(" 截止:").append(deadline.toString());
+                        userMsgBuilder.append("\n");
+                    }
+                }
+            }
+
+            Object completedObj = context.get("completed_tasks");
+            if (completedObj instanceof List) {
+                List completedList = (List) completedObj;
+                if (!completedList.isEmpty()) {
+                    userMsgBuilder.append("已完成任务（共 ").append(completedList.size()).append(" 项）:\n");
+                    for (Object item : completedList) {
+                        if (item instanceof Map) {
+                            Map map = (Map) item;
+                            Object title = map.get("title");
+                            Object compAt = map.get("completedAt");
+                            userMsgBuilder.append("- ").append(title == null ? "(无标题)" : title.toString());
+                            if (compAt != null) userMsgBuilder.append(" 完成时间:").append(compAt.toString());
+                            userMsgBuilder.append("\n");
+                        }
+                    }
+                }
+            }
+
+            Object countsObj = context.get("counts");
+            if (countsObj instanceof Map) {
+                Map counts = (Map) countsObj;
+                userMsgBuilder.append(String.format("任务计数 - 高:%s 中:%s 低:%s 今日:%s\n",
+                    counts.getOrDefault("high", 0), counts.getOrDefault("medium", 0), counts.getOrDefault("low", 0), counts.getOrDefault("today", 0)
+                ));
+            }
+
+            Object overload = context.get("overload");
+            if (overload != null) {
+                userMsgBuilder.append("是否过载: ").append(overload.toString()).append("\n");
+            }
+
+            Object weekly = context.get("weekly_core_done");
+            if (weekly != null) {
+                userMsgBuilder.append("本周核心任务完成数: ").append(weekly.toString()).append("\n");
+            }
+
+            userMsgBuilder.append("=== 上下文结束 ===\n\n");
+        }
+
+        // 最终用户消息文本
+        String userMessage = userMsgBuilder.toString();
+
+        // 调用 DynamicAiService（支持指定 provider/model）
+        String aiResp = dynamicAiService.chat(systemPrompt, userMessage, model);
+
+        // 尝试解析为 JSON
+        try {
+            String jsonStr = extractJson(aiResp);
+            Map parsed = objectMapper.readValue(jsonStr, Map.class);
+            return parsed;
+        } catch (Exception e) {
+            log.warn("[用户AI] 无法解析为 JSON，返回原始文本。错误: {}", e.getMessage());
+            Map<String, Object> fallback = new java.util.HashMap<>();
+            fallback.put("type", "answer");
+            fallback.put("content", aiResp);
+            fallback.put("data", null);
+            return fallback;
+        }
     }
     
     /**

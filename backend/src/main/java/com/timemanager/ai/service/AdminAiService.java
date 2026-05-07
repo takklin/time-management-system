@@ -19,8 +19,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.stream.Collectors;
+import com.timemanager.ai.dto.DangerLogSummary;
 
 /**
  * 管理员 AI 服务
@@ -53,6 +58,13 @@ public class AdminAiService {
     private SimpMessagingTemplate messagingTemplate;
     
     private final ObjectMapper objectMapper = new ObjectMapper();
+        private static final String SYSTEM_PROMPT = """
+            你是一个系统管理员助手。你会收到系统危险摘要、实时统计数据（如果有）和管理员的对话历史。
+            当管理员问具体的数据问题（例如“今日活跃用户”、“任务完成率”）时，你必须优先从【系统实时统计数据】中提取数字直接回答，不要发散到安全建议。
+            如果统计数据显示某个指标为0，直接说“今日活跃用户为0”。
+            只有在管理员明确询问“有什么风险”或“该怎么办”时，才结合危险摘要给出措施。
+            回答要简洁、数据驱动。
+            """;
     
     /**
      * 处理自然语言查询（支持会话历史和意图识别）
@@ -366,13 +378,19 @@ public class AdminAiService {
      * 查询活跃用户
      */
     private String executeActiveUserQuery(LocalDateTime startTime, LocalDateTime endTime) {
-        Long activeCount = operationLogMapper.selectCount(
-            new QueryWrapper<OperationLog>()
-                .eq("action", "login_success")
-                .ge("created_at", startTime)
-                .le("created_at", endTime)
-        );
-        return String.format("活跃用户数（登录）：%d", activeCount);
+        try {
+            int cnt = operationLogMapper.countDistinctLoginSuccessOperators(startTime, endTime);
+            return String.format("活跃用户数（登录）：%d", cnt);
+        } catch (Exception e) {
+            log.warn("[查询活跃用户] 使用去重统计失败，回退为日志计数: {}", e.getMessage());
+            Long activeCount = operationLogMapper.selectCount(
+                new QueryWrapper<OperationLog>()
+                    .eq("action", "login_success")
+                    .ge("created_at", startTime)
+                    .le("created_at", endTime)
+            );
+            return String.format("活跃用户数（登录，日志计数）：%d", activeCount);
+        }
     }
     
     /**
@@ -579,6 +597,146 @@ public class AdminAiService {
                 .orderByDesc("created_at")
                 .last("LIMIT 20")
         );
+    }
+
+    /**
+     * 获取危险日志摘要：最近24小时内的 critical/high 日志，以及最近1小时内登录失败频繁的 IP
+     */
+    public DangerLogSummary getDangerSummary() {
+        try {
+            StringBuilder sb = new StringBuilder();
+            List<OperationLog> dangerLogs = new ArrayList<>();
+
+            // 1. 获取最近24小时的 critical 和 high 日志
+            LocalDateTime start24 = LocalDateTime.now().minusHours(24);
+            List<OperationLog> criticalHighLogs = operationLogMapper.selectList(
+                new QueryWrapper<OperationLog>()
+                    .ge("created_at", start24)
+                    .in("risk_level", Arrays.asList("critical", "high"))
+                    .orderByDesc("created_at")
+            );
+
+            if (criticalHighLogs != null && !criticalHighLogs.isEmpty()) {
+                sb.append("⚠️ 最近24小时发现以下高风险操作：\n");
+                DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+                for (OperationLog log : criticalHighLogs) {
+                    sb.append(String.format("- %s 在 %s 执行了操作【%s】 目标:%s，结果：%s\n",
+                        log.getOperator() == null ? "(未知操作者)" : log.getOperator(),
+                        log.getCreatedAt() == null ? "(时间未知)" : log.getCreatedAt().format(fmt),
+                        log.getAction() == null ? "(未知动作)" : log.getAction(),
+                        log.getTarget() == null ? "(无目标)" : log.getTarget(),
+                        log.getResult() == null ? "(无结果)" : log.getResult()
+                    ));
+                    dangerLogs.add(log);
+                }
+            } else {
+                sb.append("✅ 最近24小时无高风险操作。\n");
+            }
+
+            // 2. 检测登录失败异常（同一IP 1小时内失败>=5次）
+            LocalDateTime oneHourAgo = LocalDateTime.now().minusHours(1);
+            List<Map<String, Object>> failedIps = operationLogMapper.selectFailedLoginIps(oneHourAgo);
+            if (failedIps != null && !failedIps.isEmpty()) {
+                sb.append("🔐 检测到以下IP存在频繁登录失败（1小时内≥5次）：\n");
+                for (Map<String, Object> ipInfo : failedIps) {
+                    sb.append(String.format("- IP: %s, 失败次数: %s\n", ipInfo.get("ip"), ipInfo.get("count")));
+                }
+            }
+
+            DangerLogSummary summary = new DangerLogSummary();
+            summary.setSummary(sb.toString());
+            summary.setLogs(dangerLogs);
+            return summary;
+        } catch (Exception e) {
+            log.error("[管理员AI] 获取危险摘要失败", e);
+            DangerLogSummary fallback = new DangerLogSummary();
+            fallback.setSummary("无法获取危险摘要：" + e.getMessage());
+            fallback.setLogs(new ArrayList<>());
+            return fallback;
+        }
+    }
+
+    /**
+     * 接收前端传入的对话历史与上下文（如危险摘要），把它们拼接为 Prompt 并调用 LLM
+     */
+    public AdminQueryResponse handleNaturalLanguageQueryWithContext(String question, String sessionId, List<Map<String, Object>> messages, Map<String, Object> context) {
+        try {
+            log.info("[管理员AI] 带上下文查询: sessionId={}, question={}", sessionId, question);
+
+            // 1) 获取或构建危险摘要
+            String dangerSummary = null;
+            if (context != null && context.get("danger_summary") != null) {
+                dangerSummary = String.valueOf(context.get("danger_summary"));
+            } else {
+                try {
+                    DangerLogSummary ds = getDangerSummary();
+                    if (ds != null) dangerSummary = ds.getSummary();
+                } catch (Exception ex) {
+                    log.warn("[管理员AI] 获取危险摘要失败: {}", ex.getMessage());
+                }
+            }
+
+            // 2) 构建对话历史文本（优先使用前端传入的 messages，否则回退到 sessionHistory）
+            StringBuilder historySb = new StringBuilder();
+            if (messages != null && !messages.isEmpty()) {
+                for (Map<String, Object> m : messages) {
+                    Object role = m.get("role");
+                    Object content = m.get("content");
+                    historySb.append(role == null ? "user" : role.toString()).append(": ")
+                             .append(content == null ? "" : content.toString()).append("\n");
+                }
+            } else {
+                List<ChatMessageDTO> recent = sessionHistoryService.getRecentMessages(sessionId, 10);
+                for (ChatMessageDTO c : recent) {
+                    historySb.append(c.getRole()).append(": ").append(c.getContent()).append("\n");
+                }
+            }
+
+            // 3) 构建 system prompt 与 user prompt（使用集中配置的 SYSTEM_PROMPT）
+            String systemPrompt = SYSTEM_PROMPT;
+
+            // 尝试从前端 context 中获取系统统计并序列化为字符串
+            String systemStatsStr = null;
+            if (context != null && context.get("system_stats") != null) {
+                try {
+                    Object ss = context.get("system_stats");
+                    if (ss instanceof String) {
+                        systemStatsStr = (String) ss;
+                    } else {
+                        systemStatsStr = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(ss);
+                    }
+                } catch (Exception ex) {
+                    log.warn("[管理员AI] 序列化 system_stats 失败: {}", ex.getMessage());
+                    systemStatsStr = String.valueOf(context.get("system_stats"));
+                }
+            }
+
+            StringBuilder userPrompt = new StringBuilder();
+            if (dangerSummary != null && !dangerSummary.isEmpty()) {
+                userPrompt.append("【系统危险操作摘要】\n");
+                userPrompt.append(dangerSummary).append("\n\n");
+            }
+
+            if (systemStatsStr != null && !systemStatsStr.isEmpty()) {
+                userPrompt.append("【系统统计】\n");
+                userPrompt.append(systemStatsStr).append("\n\n");
+            }
+
+            userPrompt.append("【对话历史】\n");
+            userPrompt.append(historySb.toString()).append("\n");
+            userPrompt.append("管理员问题: ").append(question).append("\n");
+
+            // 4) 调用 LLM
+            String answer = dynamicAiService.chat(systemPrompt, userPrompt.toString());
+
+            // 5) 保存到会话历史
+            try { sessionHistoryService.saveExchange(sessionId, question, answer, "ADMIN_CHAT"); } catch (Exception ex) { log.warn("保存会话历史失败", ex); }
+
+            return new AdminQueryResponse(answer, null);
+        } catch (Exception e) {
+            log.error("[管理员AI] 带上下文查询失败", e);
+            return new AdminQueryResponse("查询失败: " + e.getMessage(), null);
+        }
     }
     
     /**
