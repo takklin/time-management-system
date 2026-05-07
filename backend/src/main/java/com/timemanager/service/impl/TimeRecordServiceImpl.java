@@ -18,11 +18,13 @@ public class TimeRecordServiceImpl implements TimeRecordService {
 
     @Override
     public List<TimeRecord> list(Long userId, String startDate, String endDate) {
-        return timeRecordMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<TimeRecord>()
-                        .eq("user_id", userId)
-                        .between("record_date", startDate, endDate)
-                        .eq("deleted", 0));
+        com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<TimeRecord> wrapper = new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
+        wrapper.eq("user_id", userId);
+        if (startDate != null && endDate != null && !startDate.isEmpty() && !endDate.isEmpty()) {
+            wrapper.between("record_date", startDate, endDate);
+        }
+        wrapper.eq("deleted", 0);
+        return timeRecordMapper.selectList(wrapper);
     }
 
     @Override
@@ -31,12 +33,15 @@ public class TimeRecordServiceImpl implements TimeRecordService {
     }
 
     @Override
-    public void startTimer(Long userId) {
+    public Long startTimer(Long userId) {
         TimeRecord rec = new TimeRecord();
         rec.setUserId(userId);
         rec.setStartTime(LocalDateTime.now());
         rec.setRecordDate(LocalDate.now());
+        // ensure non-null duration to satisfy DB NOT NULL constraint
+        rec.setDurationMinutes(0);
         timeRecordMapper.insert(rec);
+        return rec.getId();
     }
 
     @Override
@@ -62,5 +67,10 @@ public class TimeRecordServiceImpl implements TimeRecordService {
         t.setId(id);
         t.setDeleted(1);
         timeRecordMapper.updateById(t);
+    }
+
+    @Override
+    public TimeRecord getById(Long id) {
+        return timeRecordMapper.selectById(id);
     }
 }

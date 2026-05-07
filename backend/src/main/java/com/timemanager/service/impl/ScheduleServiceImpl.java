@@ -16,11 +16,14 @@ public class ScheduleServiceImpl implements ScheduleService {
 
     @Override
     public List<Schedule> list(Long userId, String startDate, String endDate) {
-        return scheduleMapper.selectList(
-                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Schedule>()
-                        .eq("user_id", userId)
-                        .between("start_time", startDate, endDate)
-                        .eq("deleted", 0));
+        com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Schedule> wrapper =
+            new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
+        wrapper.eq("user_id", userId);
+        if (startDate != null && endDate != null && !startDate.isEmpty() && !endDate.isEmpty()) {
+            wrapper.between("start_time", startDate, endDate);
+        }
+        wrapper.eq("deleted", 0);
+        return scheduleMapper.selectList(wrapper);
     }
 
     @Override
@@ -39,5 +42,10 @@ public class ScheduleServiceImpl implements ScheduleService {
         s.setId(id);
         s.setDeleted(1);
         scheduleMapper.updateById(s);
+    }
+
+    @Override
+    public Schedule getById(Long id) {
+        return scheduleMapper.selectById(id);
     }
 }
