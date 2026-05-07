@@ -17,7 +17,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        // 本地开发后端（默认指向本地 Spring Boot，已切换为 8081）
+        target: 'http://localhost:8081',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '/api'),
       },
