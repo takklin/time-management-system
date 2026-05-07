@@ -15,6 +15,7 @@ export interface TaskParseRequest {
 
 export interface ParsedTask {
   title: string | null
+  startTime?: string | null
   deadline: string | null
   estimatedMinutes: number | null
   categoryName: string | null
@@ -22,6 +23,13 @@ export interface ParsedTask {
 
 export interface TaskSuggestionRequest {
   mainTask: string
+}
+
+export interface PromoteRequest {
+  question: string
+  context?: any
+  model?: string
+  messages?: Array<{ role: string; content: string }>
 }
 
 /**
@@ -50,4 +58,11 @@ export function getTodaySummary(): Promise<string> {
  */
 export function getTaskSuggestions(data: TaskSuggestionRequest): Promise<string> {
   return request.post('/v1/user/ai/task-suggestions', data)
+}
+
+/**
+ * 向后端发送用户问题与（可选）页面上下文，后端会把上下文拼接到 prompt 中调用 LLM
+ */
+export function promote(data: PromoteRequest): Promise<any> {
+  return request.post('/v1/user/ai/promote', data)
 }

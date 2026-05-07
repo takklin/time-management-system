@@ -31,14 +31,17 @@
           <template #header>
             <div class="card-header" style="justify-content: space-between;">
               <span>💬 智能查询助手</span>
-              <el-button 
-                text 
-                size="small" 
-                @click="clearChatHistory"
-                v-if="chatMessages.length > 0"
-              >
-                🗑️ 清空记录
-              </el-button>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <el-checkbox v-model="includeSystemStats" size="small">附加系统统计</el-checkbox>
+                <el-button 
+                  text 
+                  size="small" 
+                  @click="clearChatHistory"
+                  v-if="chatMessages.length > 0"
+                >
+                  🗑️ 清空记录
+                </el-button>
+              </div>
             </div>
           </template>
           
@@ -46,7 +49,7 @@
           <div class="messages" ref="messagesContainer">
             <div v-for="msg in chatMessages" :key="msg.id" :class="['msg', msg.role]">
               <div class="msg-avatar">{{ msg.role === 'user' ? '👨' : '🤖' }}</div>
-              <div class="msg-content">{{ msg.content }}</div>
+              <div class="msg-content" v-html="msg.role === 'assistant' ? renderMarkdown(msg.content) : escapeHtml(msg.content)"></div>
             </div>
           </div>
           
@@ -112,6 +115,8 @@
 
 <script setup lang="ts">
 import { ref, onMounted, nextTick } from 'vue'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { ElMessage } from 'element-plus'
 import * as adminAiApi from '@/api/admin/ai'
 
@@ -141,6 +146,7 @@ const unhandledAlerts = ref<Alert[]>([])
 const messagesContainer = ref<HTMLElement>()
 const sessionId = ref('')  // 会话 ID，用于维持对话上下文
 let msgIdCounter = 0
+const includeSystemStats = ref(true)
 
 // ========== 会话 ID 管理 ==========
 const STORAGE_SESSION_ID = 'ai_session_id'
@@ -327,10 +333,39 @@ const sendQuery = async () => {
   await nextTick()
   
   try {
-    // 传递 sessionId 来维持对话上下文
+    // 1) 获取危险摘要
+    let dangerSummary: any = null
+    try {
+      dangerSummary = await adminAiApi.getDangerSummary()
+    } catch (err) {
+      console.warn('[AI] 无法获取危险摘要，继续请求', err)
+      dangerSummary = null
+    }
+
+    // 2) 打包最近 12 条消息作为 messages
+    const lastN = 12
+    const recent = chatMessages.value.slice(-lastN).map(m => ({ role: m.role, content: m.content }))
+
+    // 2.5) 可选：获取系统统计并将其并入 context
+    let systemStats: any = null
+    if (includeSystemStats.value) {
+      try {
+        systemStats = await adminAiApi.getSystemStatistics()
+      } catch (err) {
+        console.warn('[AI] 获取系统统计失败，继续发送查询', err)
+        systemStats = null
+      }
+    }
+
+    // 3) 传递 sessionId + messages + context 来维持对话上下文
+    const contextObj: any = { danger_summary: dangerSummary?.summary || '' }
+    if (systemStats) contextObj.system_stats = systemStats
+
     const response = await adminAiApi.queryData({ 
       question: query,
-      sessionId: sessionId.value 
+      sessionId: sessionId.value,
+      messages: recent,
+      context: contextObj
     })
     
     // 确保 response 有 answer 属性
@@ -370,8 +405,44 @@ const quickQuery = async (type: string) => {
 
 const refreshAlerts = async () => {
   try {
-    const alerts = await adminAiApi.getAlerts()
-    unhandledAlerts.value = Array.isArray(alerts) ? alerts : []
+    // 优先使用实时危险摘要接口（与仪表盘一致），避免依赖持久化的 ai_alert 表
+    const danger = await adminAiApi.getDangerSummary()
+    console.debug('[AI] getDangerSummary response:', danger)
+
+    const logs = Array.isArray(danger?.logs) ? danger.logs : []
+
+    // 将 OperationLog 映射为预警项格式（兼容原有 UI）
+    unhandledAlerts.value = logs.map((l: any, idx: number) => {
+      const risk = (l.riskLevel || l.risk_level || '').toString().toLowerCase()
+      const severity = risk === 'critical' || risk === 'high' ? 'HIGH' : (risk === 'medium' ? 'MEDIUM' : 'LOW')
+      const createdAt = l.createdAt || l.created_at || l.created_at || ''
+      const operator = l.operator || l.user || l.ip || '系统'
+      const title = `${l.action || '操作'} 由 ${operator}`
+      const description = `${operator} 在 ${createdAt} 执行了 ${l.action || ''}，目标: ${l.target || ''}，结果: ${l.result || ''}`
+
+      return {
+        id: l.id || -(idx + 1),
+        alertType: l.action || 'OPERATION',
+        severity,
+        title,
+        description,
+        suggestion: l.suggestion || '',
+        relatedLogIds: l.related_log_ids || null,
+        isHandled: 0,
+        createdAt: createdAt
+      }
+    })
+
+    // 如果没有日志，再回退尝试读取持久化的 ai_alert（兼容旧逻辑）
+    if (unhandledAlerts.value.length === 0) {
+      try {
+        const alerts = await adminAiApi.getAlerts()
+        console.debug('[AI] fallback getAlerts response:', alerts)
+        unhandledAlerts.value = Array.isArray(alerts) ? alerts : []
+      } catch (err) {
+        console.warn('[AI] fallback getAlerts 失败', err)
+      }
+    }
   } catch (error: any) {
     console.error('加载预警失败:', error)
     unhandledAlerts.value = []
@@ -404,6 +475,27 @@ const scrollToBottom = async () => {
   if (messagesContainer.value) {
     messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
   }
+}
+
+// 配置 marked，关闭导致警告的两个特性
+marked.setOptions({
+  breaks: true,
+  gfm: true,
+  mangle: false,
+  headerIds: false
+})
+
+// 渲染 Markdown 为安全的 HTML
+const renderMarkdown = (text: string | undefined | null) => {
+  if (!text) return ''
+  const rawHtml = marked.parse(String(text))
+  return DOMPurify.sanitize(rawHtml)
+}
+
+// 简单转义用于用户文本（插入到 v-html 时保持安全）
+const escapeHtml = (text: string | undefined | null) => {
+  if (text == null) return ''
+  return String(text).replace(/[&<>]/g, (m) => (m === '&' ? '&amp;' : m === '<' ? '&lt;' : '&gt;'))
 }
 </script>
 
