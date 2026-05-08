@@ -1,13 +1,15 @@
 import service from '@/utils/request'
 
 export interface Task {
-  id?: number
+  id?: string | number
   title: string
-  categoryId: number | null
+  categoryId: number | string | null
   categoryName?: string
   priority: 'high' | 'medium' | 'low'
   deadline?: string
+  startTime?: string
   estimatedTime?: number
+  estimatedMinutes?: number
   actualTime?: number
   description?: string
   completed: boolean
@@ -33,7 +35,7 @@ export function getTasks(query?: TaskQuery) {
 /**
  * 获取单个任务详情
  */
-export function getTask(id: number) {
+export function getTask(id: number | string) {
   return service.get(`/v1/tasks/${id}`)
 }
 
@@ -47,14 +49,14 @@ export function createTask(data: Task) {
 /**
  * 更新任务
  */
-export function updateTask(id: number, data: Partial<Task>) {
+export function updateTask(id: number | string, data: Partial<Task>) {
   return service.put(`/v1/tasks/${id}`, data)
 }
 
 /**
  * 删除任务
  */
-export function deleteTask(id: number) {
+export function deleteTask(id: number | string) {
   return service.delete(`/v1/tasks/${id}`)
 }
 
@@ -68,8 +70,9 @@ export function deleteTasks(ids: number[]) {
 /**
  * 标记任务为完成
  */
-export function completeTask(id: number) {
-  return service.post(`/v1/tasks/${id}/complete`)
+export function completeTask(id: number | string, actualMinutes?: number) {
+  // send actualMinutes as query param when provided
+  return service.put(`/v1/tasks/${id}/complete`, null, { params: actualMinutes != null ? { actualMinutes } : {} })
 }
 
 /**
@@ -89,13 +92,13 @@ export function createCategory(data: { name: string; color?: string }) {
 /**
  * 更新分类
  */
-export function updateCategory(id: number, data: { name: string; color?: string }) {
+export function updateCategory(id: number | string, data: { name: string; color?: string }) {
   return service.put(`/v1/categories/${id}`, data)
 }
 
 /**
  * 删除分类
  */
-export function deleteCategory(id: number) {
+export function deleteCategory(id: number | string) {
   return service.delete(`/v1/categories/${id}`)
 }

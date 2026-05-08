@@ -29,8 +29,8 @@ export function getSchedules(query?: ScheduleQuery) {
 /**
  * 获取单个日程详情
  */
-export function getSchedule(id: number) {
-  return service.get(`/v1/schedules/${id}`)
+export function getSchedule(id: number | string, config?: any) {
+  return service.get(`/v1/schedules/${id}`, config)
 }
 
 /**
@@ -43,14 +43,14 @@ export function createSchedule(data: Schedule) {
 /**
  * 更新日程
  */
-export function updateSchedule(id: number, data: Partial<Schedule>) {
+export function updateSchedule(id: number | string, data: Partial<Schedule>) {
   return service.put(`/v1/schedules/${id}`, data)
 }
 
 /**
  * 删除日程
  */
-export function deleteSchedule(id: number) {
+export function deleteSchedule(id: number | string) {
   return service.delete(`/v1/schedules/${id}`)
 }
 

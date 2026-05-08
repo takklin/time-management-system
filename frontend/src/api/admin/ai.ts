@@ -43,8 +43,25 @@ export interface HandleAlertRequest {
 /**
  * 自然语言查询
  */
-export function queryData(data: QueryRequest): Promise<QueryResponse> {
+export interface AdminQueryRequest extends QueryRequest {
+  context?: any
+  messages?: Array<{ role: string; content: string }>
+}
+
+export function queryData(data: AdminQueryRequest): Promise<QueryResponse> {
   return request.post('/v1/admin/ai/query', data)
+}
+
+/**
+ * 获取危险日志摘要（用于在 AI 提示中附带）
+ */
+export interface DangerLogSummary {
+  summary: string
+  logs?: any[]
+}
+
+export function getDangerSummary(): Promise<DangerLogSummary> {
+  return request.get('/v1/admin/ai/alerts/danger-summary')
 }
 
 /**
@@ -52,6 +69,13 @@ export function queryData(data: QueryRequest): Promise<QueryResponse> {
  */
 export function getAlerts(): Promise<AiAlert[]> {
   return request.get('/v1/admin/ai/alerts/unhandled')
+}
+
+/**
+ * 获取完整系统统计数据（供管理员助手附带上下文使用）
+ */
+export function getSystemStatistics(days = 30): Promise<any> {
+  return request.get(`/v1/admin/system/statistics?days=${days}`)
 }
 
 /**

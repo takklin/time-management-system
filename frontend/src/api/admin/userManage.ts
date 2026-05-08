@@ -21,6 +21,14 @@ export function getUserAnalytics(userId: number) {
   return request.get(`/v1/admin/users/${userId}/analytics`)
 }
 
+export function getUserTasks(userId: number, page = 1, size = 20) {
+  return request.get(`/v1/admin/users/${userId}/tasks`, { params: { page, size } })
+}
+
+export function getUserTimeRecords(userId: number, page = 1, size = 20) {
+  return request.get(`/v1/admin/users/${userId}/time-records`, { params: { page, size } })
+}
+
 export function updateUserStatus(userId: number, status: number) {
   return request.put(`/v1/admin/users/${userId}/status`, { status })
 }
@@ -31,4 +39,12 @@ export function resetUserPassword(userId: number, password = '123456') {
 
 export function deleteUser(userId: number) {
   return request.delete(`/v1/admin/users/${userId}`)
+}
+
+export function getUserLogs(userId: number, page = 1, size = 20) {
+  return request.get(`/v1/admin/users/${userId}/logs`, { params: { page, size } })
+}
+
+export function exportUserAnalytics(userId: number) {
+  return request.get(`/v1/admin/users/${userId}/analytics/export`, { responseType: 'blob' as any })
 }

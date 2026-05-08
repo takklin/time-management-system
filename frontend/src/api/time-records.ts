@@ -1,12 +1,13 @@
 import service from '@/utils/request'
+import dayjs from 'dayjs'
 
 export interface TimeRecord {
-  id?: number
-  taskId: number
+  id?: string | number
+  taskId: string | number
   startTime: string
   endTime: string
   duration: number
-  notes?: string
+  note?: string
 }
 
 export interface TimeRecordQuery {
@@ -28,7 +29,7 @@ export function getTimeRecords(query?: TimeRecordQuery) {
 /**
  * 获取单个时间记录
  */
-export function getTimeRecord(id: number) {
+export function getTimeRecord(id: string | number) {
   return service.get(`/v1/time-records/${id}`)
 }
 
@@ -36,20 +37,43 @@ export function getTimeRecord(id: number) {
  * 创建时间记录
  */
 export function createTimeRecord(data: TimeRecord) {
-  return service.post('/v1/time-records', data)
+  // normalize payload to backend expectations:
+  // - duration -> durationMinutes (DB NOT NULL)
+  // - startTime/endTime -> 'YYYY-MM-DDTHH:mm:ss' (LocalDateTime)
+  // - recordDate derived from startTime if not provided
+  const payload: any = { ...data }
+  if (payload.duration !== undefined && payload.durationMinutes === undefined) {
+    payload.durationMinutes = payload.duration
+    delete payload.duration
+  }
+  if (payload.startTime) {
+    payload.recordDate = payload.recordDate || dayjs(payload.startTime).format('YYYY-MM-DD')
+    payload.startTime = dayjs(payload.startTime).format('YYYY-MM-DDTHH:mm:ss')
+  }
+  if (payload.endTime) {
+    payload.endTime = dayjs(payload.endTime).format('YYYY-MM-DDTHH:mm:ss')
+  }
+  return service.post('/v1/time-records', payload)
 }
 
 /**
  * 更新时间记录
  */
-export function updateTimeRecord(id: number, data: Partial<TimeRecord>) {
-  return service.put(`/v1/time-records/${id}`, data)
+export function updateTimeRecord(id: string | number, data: Partial<TimeRecord>) {
+  const payload: any = { ...data }
+  if (payload.duration !== undefined && payload.durationMinutes === undefined) {
+    payload.durationMinutes = payload.duration
+    delete payload.duration
+  }
+  if (payload.startTime) payload.startTime = dayjs(payload.startTime).format('YYYY-MM-DDTHH:mm:ss')
+  if (payload.endTime) payload.endTime = dayjs(payload.endTime).format('YYYY-MM-DDTHH:mm:ss')
+  return service.put(`/v1/time-records/${id}`, payload)
 }
 
 /**
  * 删除时间记录
  */
-export function deleteTimeRecord(id: number) {
+export function deleteTimeRecord(id: string | number) {
   return service.delete(`/v1/time-records/${id}`)
 }
 

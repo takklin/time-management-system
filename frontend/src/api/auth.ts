@@ -20,6 +20,15 @@ export interface RegisterRequest {
   password: string
 }
 
+export interface RegisterCategory {
+  name: string
+  color?: string
+}
+
+export interface RegisterRequestWithCategories extends RegisterRequest {
+  categories?: RegisterCategory[]
+}
+
 /**
  * 用户登录
  */
@@ -30,7 +39,7 @@ export function login(data: LoginRequest) {
 /**
  * 用户注册
  */
-export function register(data: RegisterRequest) {
+export function register(data: RegisterRequestWithCategories) {
   return service.post('/v1/auth/register', data)
 }
 

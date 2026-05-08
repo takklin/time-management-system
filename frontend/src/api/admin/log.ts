@@ -34,3 +34,7 @@ export function exportLogs(params: LogQuery) {
 export function cleanupLogs(retentionDays: number = 90) {
   return request.post('/v1/admin/logs/cleanup', { retentionDays })
 }
+
+export function seedDemoLogs() {
+  return request.post('/v1/admin/logs/seed-demo')
+}
