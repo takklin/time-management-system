@@ -37,3 +37,10 @@ AI_CONFIG_QUICK_INIT.sql
 secrets.txt
 *.bfg-report/
 bfg.jar
+backend/backups/
+*.json
+cypress/
+stats.json
+temp_*.json
+scripts/
+docs/
