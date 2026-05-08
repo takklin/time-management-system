@@ -33,10 +33,13 @@ public class CategoryServiceImpl implements CategoryService {
     }
 
     @Override
-    public void delete(Long id) {
+    public int delete(Long id, Long userId) {
         Category c = new Category();
-        c.setId(id);
         c.setDeleted(1);
-        categoryMapper.updateById(c);
+        c.setUpdatedAt(java.time.LocalDateTime.now());
+        // update with wrapper to ensure only the user's category is affected
+        com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<Category> uw = new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<>();
+        uw.eq("id", id).eq("user_id", userId);
+        return categoryMapper.update(c, uw);
     }
 }

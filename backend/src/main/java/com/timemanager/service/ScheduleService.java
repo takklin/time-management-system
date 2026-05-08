@@ -8,4 +8,5 @@ public interface ScheduleService {
     void create(Schedule schedule);
     void update(Schedule schedule);
     void delete(Long id);
+    Schedule getById(Long id);
 }

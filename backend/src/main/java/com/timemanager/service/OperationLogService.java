@@ -8,6 +8,8 @@ import com.timemanager.mapper.OperationLogMapper;
 import com.timemanager.mapper.AlertLogMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.jdbc.core.JdbcTemplate;
+import java.util.HashMap;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +25,9 @@ public class OperationLogService {
 
     @Autowired
     private AlertLogMapper alertLogMapper;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     /**
      * 分页获取操作日志（支持筛选）
@@ -129,7 +134,14 @@ public class OperationLogService {
             log.setOperator(operator != null && !operator.isEmpty() ? operator : "anonymous");
             log.setAction(action);
             log.setTarget(target);
-            log.setResult(result);
+            // 规范化 result 字段，统一写入 success / failed
+            String normalizedResult = (result == null) ? "failed" : result.trim().toLowerCase();
+            if ("ok".equals(normalizedResult) || "succeeded".equals(normalizedResult) || "true".equals(normalizedResult)) {
+                normalizedResult = "success";
+            } else if ("failure".equals(normalizedResult) || "false".equals(normalizedResult)) {
+                normalizedResult = "failed";
+            }
+            log.setResult(normalizedResult);
             log.setIp(ip != null && !ip.isEmpty() ? ip : "0.0.0.0");
             log.setUserAgent(userAgent != null ? truncate(userAgent, 500) : null);
             log.setCreatedAt(LocalDateTime.now());
@@ -243,6 +255,80 @@ public class OperationLogService {
                 "high", highCount,
                 "criticalPercentage", logsInRange.isEmpty() ? 0 : (double) criticalCount / logsInRange.size()
         );
+    }
+
+    /**
+     * 扫描最近的操作日志以检测异常模式并生成预警（可被定时任务或手动触发）
+     */
+    public void detectAnomalies() {
+        try {
+            // 1) 连续失败登录：同一IP在最近10分钟内失败次数 >= 5
+            String sql1 = "SELECT ip, COUNT(*) AS cnt FROM operation_log " +
+                    "WHERE action LIKE '%LOGIN%' AND LOWER(result) <> 'success' " +
+                    "AND created_at >= DATE_SUB(NOW(), INTERVAL 10 MINUTE) " +
+                    "GROUP BY ip HAVING COUNT(*) >= 5";
+            List<Map<String, Object>> rows1 = jdbcTemplate.queryForList(sql1);
+            for (Map<String, Object> r : rows1) {
+                String ip = (String) r.get("ip");
+                Number cnt = (Number) r.get("cnt");
+                AlertLog alert = AlertLog.builder()
+                        .alertType("LOGIN_BURST")
+                        .description("检测到来自 IP " + ip + " 的连续失败登录 " + cnt + " 次")
+                        .severity("high")
+                        .relatedIp(ip)
+                        .relatedLogIds(null)
+                        .relatedUsername(null)
+                        .status(0)
+                        .createdAt(LocalDateTime.now())
+                        .build();
+                alertLogMapper.insert(alert);
+            }
+
+            // 2) 批量删除：同一用户在最近10分钟内成功删除记录 >= 10
+            String sql2 = "SELECT operator, COUNT(*) AS cnt FROM operation_log " +
+                    "WHERE action LIKE '%DELETE%' AND LOWER(result) = 'success' " +
+                    "AND created_at >= DATE_SUB(NOW(), INTERVAL 10 MINUTE) " +
+                    "GROUP BY operator HAVING COUNT(*) >= 10";
+            List<Map<String, Object>> rows2 = jdbcTemplate.queryForList(sql2);
+            for (Map<String, Object> r : rows2) {
+                String operator = (String) r.get("operator");
+                Number cnt = (Number) r.get("cnt");
+                AlertLog alert = AlertLog.builder()
+                        .alertType("BATCH_DELETE")
+                        .description("用户 " + operator + " 在最近10分钟内执行了 " + cnt + " 次删除操作")
+                        .severity("critical")
+                        .relatedUsername(operator)
+                        .relatedLogIds(null)
+                        .relatedIp(null)
+                        .status(0)
+                        .createdAt(LocalDateTime.now())
+                        .build();
+                alertLogMapper.insert(alert);
+            }
+
+            // 3) 授权/提权操作（直接记录为超高风险）
+            String sql3 = "SELECT id, operator, ip FROM operation_log " +
+                    "WHERE action LIKE '%GRANT_ADMIN%' AND LOWER(result) = 'success' " +
+                    "AND created_at >= DATE_SUB(NOW(), INTERVAL 60 MINUTE)";
+            List<Map<String, Object>> rows3 = jdbcTemplate.queryForList(sql3);
+            for (Map<String, Object> r : rows3) {
+                String operator = (String) r.get("operator");
+                String ip = (String) r.get("ip");
+                AlertLog alert = AlertLog.builder()
+                        .alertType("PRIVILEGE_ESCALATION")
+                        .description("用户 " + operator + " 成功授予管理员权限（疑似提权操作）")
+                        .severity("critical")
+                        .relatedUsername(operator)
+                        .relatedIp(ip)
+                        .relatedLogIds(null)
+                        .status(0)
+                        .createdAt(LocalDateTime.now())
+                        .build();
+                alertLogMapper.insert(alert);
+            }
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
     }
 
     /**

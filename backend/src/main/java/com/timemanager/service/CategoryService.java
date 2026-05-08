@@ -7,5 +7,5 @@ public interface CategoryService {
     List<Category> listByUser(Long userId);
     void create(Category category);
     void update(Category category);
-    void delete(Long id);
+    int delete(Long id, Long userId);
 }
