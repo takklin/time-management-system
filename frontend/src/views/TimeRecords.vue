@@ -1,66 +1,73 @@
 <template>
   <div class="time-records-container">
-    <div class="timer-section">
-      <div class="timer-display">
-        <div class="timer-value">{{ formattedTime }}</div>
-        <div class="timer-actions">
-          <el-button
-            v-if="!isRunning"
-            type="success"
-            size="large"
-            @click="startTimer"
-          >
-            开始计时
-          </el-button>
-          <template v-else>
-            <el-button type="warning" size="large" @click="pauseTimer">暂停</el-button>
-            <el-button type="danger" size="large" @click="stopTimer">停止</el-button>
-          </template>
-        </div>
-      </div>
-
-      <div class="timer-options">
-        <el-select v-model="selectedTaskId" placeholder="选择任务" clearable>
-          <el-option v-for="task in taskStore.tasks" :key="task.id" :label="task.title" :value="task.id" />
-        </el-select>
-      </div>
-
-      <el-divider />
-
-      <div class="manual-record">
-        <h3>手动记录</h3>
-        <el-form :model="manualForm" label-width="100px">
-          <el-form-item label="任务">
-            <el-select v-model="manualForm.taskId" placeholder="选择任务">
-              <el-option v-for="task in taskStore.tasks" :key="task.id" :label="task.title" :value="task.id" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="耗时（分钟）">
-            <el-input-number v-model="manualForm.duration" :min="1" />
-          </el-form-item>
-          <el-form-item label="备注">
-            <el-input v-model="manualForm.notes" type="textarea" :rows="2" />
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" @click="saveManualRecord">保存记录</el-button>
-          </el-form-item>
-        </el-form>
-      </div>
-    </div>
-
-    <el-divider />
+    <!-- timer-section 已移除 -->
 
     <div class="records-section">
-      <h2>时间记录历史</h2>
-      <el-table :data="timeRecordStore.records" stripe>
-        <el-table-column prop="taskId" label="任务" width="150" />
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+          <div style="flex:1; display:flex; align-items:center; gap:12px">
+            <h2 style="margin:0">时间记录历史</h2>
+            <el-date-picker
+              v-model="dateRange"
+              type="daterange"
+              range-separator="至"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+              unlink-panels
+              @change="onDateRangeChange"
+            />
+          </div>
+          <div class="stats-cards">
+            <el-card class="stat-card">今日: <strong>{{ todayTotal }} 分钟</strong></el-card>
+            <el-card class="stat-card">本周: <strong>{{ thisWeekTotal }} 分钟</strong> (<span :style="{color: weekRatio>=0? '#67c23a':'#f56c6c'}">{{ weekRatio }}%</span>)</el-card>
+          </div>
+        </div>
+
+        <div style="margin-top:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">
+          <div>
+            <el-card class="chart-card">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px">
+                <div style="font-weight:600">近 7 天 专注趋势</div>
+                <div style="font-size:12px;color:#888">单位：分钟</div>
+              </div>
+              <div style="height:240px" id="dailyFocusChart"></div>
+            </el-card>
+          </div>
+          <div>
+            <!-- 替换为贡献日历组件（GitHub 风格） -->
+            <ContributionHeatmap :records="timeRecordStore.records" />
+          </div>
+          <div>
+            <el-card class="chart-card">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px">
+                <div style="font-weight:600">任务分类占比</div>
+                <div style="font-size:12px;color:#888">Top 8 任务</div>
+              </div>
+              <div style="height:240px" id="topTasksChart"></div>
+            </el-card>
+          </div>
+        </div>
+      <div v-if="timeRecordStore.loading" style="padding:20px;text-align:center">加载中...</div>
+      <div v-else-if="timeRecordStore.error" style="padding:20px;text-align:center">
+        <div style="margin-bottom:8px;color:#f56c6c">加载时间记录失败：{{ timeRecordStore.error }}</div>
+        <el-button type="primary" @click="() => timeRecordStore.fetchRecords()">重试</el-button>
+      </div>
+      <div v-else-if="!timeRecordStore.records || timeRecordStore.records.length === 0" style="padding:20px;text-align:center">
+        <div style="margin-bottom:8px">当前没有时间记录。</div>
+        <el-button type="primary" @click="() => timeRecordStore.fetchRecords()">刷新</el-button>
+      </div>
+      <el-table v-else :data="timeRecordStore.records" stripe>
+        <el-table-column label="任务" width="200">
+          <template #default="{ row }">
+            {{ row.taskTitle ? safeTaskTitle(row.taskTitle) : getTaskTitle(row.taskId) }}
+          </template>
+        </el-table-column>
         <el-table-column prop="startTime" label="开始时间" width="180" />
         <el-table-column prop="endTime" label="结束时间" width="180" />
         <el-table-column prop="duration" label="耗时（分钟）" width="120" />
-        <el-table-column prop="notes" label="备注" />
+        <el-table-column prop="note" label="备注" />
         <el-table-column label="操作" width="120" fixed="right">
           <template #default="{ row }">
-            <el-button type="danger" link size="small" @click="deleteRecord(row.id)">删除</el-button>
+            <el-button :loading="deletingId === row.id" type="danger" link size="small" @click="deleteRecord(row.id)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -69,23 +76,37 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
+import ContributionHeatmap from '@/components/ContributionHeatmap.vue'
 import { useTaskStore } from '@/store/task'
 import { useTimeRecordStore } from '@/store/time-record'
 import { ElMessage } from 'element-plus'
+import dayjs from 'dayjs'
+import { ElMessageBox } from 'element-plus'
+import { safeTaskTitle } from '@/utils/encoding'
+import * as echarts from 'echarts'
 
 const taskStore = useTaskStore()
 const timeRecordStore = useTimeRecordStore()
 
+const dateRange = ref<any[]>([new Date(new Date().getTime() - 6 * 24 * 60 * 60 * 1000), new Date()])
+
+let chartDailyFocus: any = null
+let chartTaskTrend: any = null
+let chartTopTasks: any = null
+
 const isRunning = ref(false)
 const elapsedTime = ref(0)
-const selectedTaskId = ref<number | undefined>()
+const selectedTaskId = ref<string | number | undefined>()
+const deletingId = ref<string | number | undefined>()
 let timerInterval: ReturnType<typeof setInterval> | null = null
 
 const manualForm = reactive({
   taskId: undefined,
   duration: 0,
-  notes: '',
+  unit: 'min',
+  type: 'work',
+  note: '',
 })
 
 const formattedTime = computed(() => {
@@ -96,22 +117,156 @@ const formattedTime = computed(() => {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 })
 
+// 估算剩余时间（分钟）
+const estimatedRemaining = computed(() => {
+  if (selectedTaskId.value == null) return null
+  const task = taskStore.tasks.find(t => String(t.id) === String(selectedTaskId.value))
+  if (!task || !task.estimatedTime) return null
+  const totalMinutes = (task.estimatedTime || 0) * 60
+  const used = timeRecordStore.records.filter(r => String(r.taskId) === String(selectedTaskId.value)).reduce((s, r) => s + (r.duration||0), 0)
+  return Math.max(0, totalMinutes - used)
+})
+
+// 统计：今日与本周
+const todayTotal = computed(() => {
+  const today = dayjs().format('YYYY-MM-DD')
+  return timeRecordStore.records.filter(r => dayjs(r.startTime).format('YYYY-MM-DD') === today).reduce((s, r) => s + (r.duration||0), 0)
+})
+const thisWeekTotal = computed(() => {
+  const start = dayjs().startOf('week')
+  const end = dayjs().endOf('week')
+  return timeRecordStore.records.filter(r => {
+    const d = dayjs(r.startTime)
+    return d.isSame(start, 'day') || d.isSame(end, 'day') || (d.isAfter(start, 'day') && d.isBefore(end, 'day'))
+  }).reduce((s, r) => s + (r.duration||0), 0)
+})
+const lastWeekTotal = computed(() => {
+  const start = dayjs().subtract(1,'week').startOf('week')
+  const end = dayjs().subtract(1,'week').endOf('week')
+  return timeRecordStore.records.filter(r => {
+    const d = dayjs(r.startTime)
+    return d.isSame(start, 'day') || d.isSame(end, 'day') || (d.isAfter(start, 'day') && d.isBefore(end, 'day'))
+  }).reduce((s, r) => s + (r.duration||0), 0)
+})
+const weekRatio = computed(() => {
+  const prev = lastWeekTotal.value || 1
+  return Math.round(((thisWeekTotal.value - lastWeekTotal.value) / prev) * 100)
+})
+
+const getRangeDays = (range: any[]) => {
+  const start = new Date(range[0])
+  const end = new Date(range[1])
+  const days: string[] = []
+  const cur = new Date(start)
+  while (cur <= end) {
+    days.push(cur.toISOString().slice(0, 10))
+    cur.setDate(cur.getDate() + 1)
+  }
+  return days
+}
+
+const initCharts = () => {
+  const el1 = document.getElementById('dailyFocusChart')
+  const el3 = document.getElementById('topTasksChart')
+  if (el1) chartDailyFocus = echarts.init(el1)
+  if (el3) chartTopTasks = echarts.init(el3)
+}
+
+const updateAllCharts = () => {
+  const records = (timeRecordStore.records || []).filter((r: any) => r && r.startTime && r.duration && Number(r.duration) > 0)
+  const days = getRangeDays(dateRange.value)
+
+  // 每日专注时长
+  const daily: number[] = days.map(_ => 0)
+  for (const r of records) {
+    const day = dayjs(r.startTime).format('YYYY-MM-DD')
+    const idx = days.indexOf(day)
+    if (idx !== -1) daily[idx] += Number(r.duration || 0)
+  }
+  if (chartDailyFocus) chartDailyFocus.setOption({
+    tooltip: { trigger: 'axis' },
+    xAxis: { type: 'category', data: days.map(d => d.slice(5)) },
+    yAxis: { type: 'value' },
+    series: [{ data: daily, type: 'bar', name: '专注（分钟）', itemStyle: { color: '#67C23A' } }]
+  })
+
+  // Top tasks
+  const byTask: Record<string, number> = {}
+  for (const r of records) {
+    const id = String(r.taskId || '未指定')
+    byTask[id] = (byTask[id] || 0) + Number(r.duration || 0)
+  }
+  const top = Object.keys(byTask).map(k => ({ id: k, val: byTask[k], title: getTaskTitle(k) })).sort((a,b) => b.val - a.val).slice(0,8)
+  if (chartTopTasks) chartTopTasks.setOption({
+    tooltip: { trigger: 'item' },
+    legend: { orient: 'vertical', left: 'left' },
+    series: [{ name: '任务占比', type: 'pie', radius: '50%', data: top.map(t => ({ name: t.title, value: Math.round(t.val) })) }]
+  })
+
+  // 任务趋势（对 top N 任务按天堆叠线）
+  const topIds = top.map(t => t.id)
+  const series = topIds.map(id => {
+    const data = days.map(d => {
+      return records.filter(r => String(r.taskId) === String(id) && dayjs(r.startTime).format('YYYY-MM-DD') === d).reduce((s, r) => s + Number(r.duration || 0), 0)
+    })
+    return { name: getTaskTitle(id), type: 'line', stack: 'total', data }
+  })
+  if (chartTaskTrend) chartTaskTrend.setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: series.map(s => s.name) },
+    xAxis: { type: 'category', data: days.map(d => d.slice(5)) },
+    yAxis: { type: 'value' },
+    series
+  })
+}
+
+const loadRecordsForRange = async () => {
+  try {
+    const start = dayjs(dateRange.value[0]).format('YYYY-MM-DD')
+    const end = dayjs(dateRange.value[1]).format('YYYY-MM-DD')
+    await timeRecordStore.fetchRecords(start, end)
+    // ensure DOM ready
+    await nextTick()
+    initCharts()
+    updateAllCharts()
+  } catch (err: any) {
+    console.error('loadRecordsForRange failed', err)
+    ElMessage.error('加载时间记录失败')
+  }
+}
+
+// 处理 el-date-picker 的 change 事件（v-model 会自动同步 dateRange）
+const onDateRangeChange = (val: any) => {
+  if (Array.isArray(val) && val.length === 2) dateRange.value = val
+  else if (val) dateRange.value = val
+  // 触发加载，watch 也会触发，这里主动调用以确保及时响应
+  loadRecordsForRange().catch(() => {})
+}
+
 onMounted(async () => {
   try {
     await taskStore.fetchTasks()
-    await timeRecordStore.fetchRecords()
-  } catch (error) {
+    await loadRecordsForRange()
+  } catch (error: any) {
     console.error('TimeRecords load failed', error)
-    ElMessage.error('加载时间记录失败，请稍后重试')
+    ElMessage.error(error && error.message ? error.message : '加载时间记录失败，请稍后重试')
   }
 })
+
+watch(dateRange, () => {
+  loadRecordsForRange()
+})
+
+// also update charts when records change
+watch(() => timeRecordStore.records, () => {
+  nextTick(() => updateAllCharts())
+}, { deep: true })
 
 const startTimer = () => {
   if (!selectedTaskId.value) {
     ElMessage.error('请先选择任务')
     return
   }
-
   isRunning.value = true
   timerInterval = setInterval(() => {
     elapsedTime.value++
@@ -144,6 +299,7 @@ const stopTimer = async () => {
       startTime: startTime.toISOString(),
       endTime: now.toISOString(),
       duration: Math.round(elapsedTime.value / 60),
+      note: '手动记录',
     })
 
     ElMessage.success('时间记录保存成功')
@@ -163,33 +319,77 @@ const saveManualRecord = async () => {
 
   try {
     const now = new Date()
-    const startTime = new Date(now.getTime() - manualForm.duration * 60 * 1000)
+    let durationMinutes = manualForm.duration
+    if (manualForm.unit === 'sec') durationMinutes = Math.round(manualForm.duration / 60)
+    const startTime = new Date(now.getTime() - durationMinutes * 60 * 1000)
 
     await timeRecordStore.createRecord({
       taskId: manualForm.taskId,
       startTime: startTime.toISOString(),
       endTime: now.toISOString(),
-      duration: manualForm.duration,
-      notes: manualForm.notes,
+      duration: durationMinutes,
+      note: manualForm.note,
     })
 
     ElMessage.success('记录保存成功')
     manualForm.taskId = undefined
     manualForm.duration = 0
-    manualForm.notes = ''
+    manualForm.note = ''
     await timeRecordStore.fetchRecords()
   } catch (error) {
     ElMessage.error('保存失败')
   }
 }
 
-const deleteRecord = async (id: number | undefined) => {
-  if (!id) return
+// 切换 selectedTask 时如正在计时需确认是否保存当前计时
+watch(selectedTaskId, async (newVal, oldVal) => {
+  if (isRunning.value && oldVal && newVal !== oldVal) {
+    try {
+      const res = await ElMessageBox.confirm('当前计时正在进行，切换任务将提示是否保存当前计时，是否保存并继续？', '切换任务', { confirmButtonText: '保存并切换', cancelButtonText: '放弃并切换', type: 'warning' })
+      // 保存当前
+      await stopTimer()
+      // 继续并选择新任务
+    } catch (e) {
+      // 放弃保存，仅停止并切换
+      await stopTimer()
+    }
+  }
+})
+
+const exportCsv = () => {
+  const rows = [['任务ID','开始时间','结束时间','耗时(分钟)','备注']]
+  for (const r of timeRecordStore.records) rows.push([String(r.taskTitle ? safeTaskTitle(r.taskTitle) : getTaskTitle(r.taskId)), r.startTime, r.endTime, String(r.duration), (r.note||'')])
+  const csv = rows.map(r => r.map(c => '"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\r\n')
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `time-records-${dayjs().format('YYYYMMDD')}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+const getTaskTitle = (taskId?: string | number) => {
+  if (taskId == null) return '-'
+  const t = taskStore.tasks.find(t => String(t.id) === String(taskId))
+  const title = t && (t as any).title ? String((t as any).title).trim() : ''
+  if (title) return safeTaskTitle(title)
+  return String(taskId)
+}
+
+const deleteRecord = async (id: string | number | undefined) => {
+  if (id == null) return
   try {
+    deletingId.value = id
     await timeRecordStore.deleteRecord(id)
+    // 确保从后端重新拉取以校验删除是否真正生效
+    try { await timeRecordStore.fetchRecords() } catch (e) { /* ignore */ }
     ElMessage.success('记录删除成功')
-  } catch (error) {
-    ElMessage.error('删除失败')
+  } catch (error: any) {
+    ElMessage.error((error && error.message) ? error.message : '删除失败')
+    try { await timeRecordStore.fetchRecords() } catch (e) { /* ignore */ }
+  } finally {
+    deletingId.value = undefined
   }
 }
 </script>

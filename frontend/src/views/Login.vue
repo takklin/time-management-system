@@ -1,6 +1,6 @@
 <template>
-  <div class="login-container">
-    <div class="login-box">
+  <div class="login-container auth-bg">
+    <div class="login-box" :class="{ shake: shake }">
       <div class="login-header">
         <h1>时间管理系统</h1>
         <p>欢迎登录</p>
@@ -33,9 +33,11 @@
         </el-form-item>
 
         <el-form-item>
-          <el-button type="primary" size="large" @click="handleLogin" :loading="loading" block>
-            登录
-          </el-button>
+          <div class="action-row">
+            <el-button class="primary-action" @click="handleLogin" :loading="loading">
+              登录
+            </el-button>
+          </div>
         </el-form-item>
 
         <div class="form-footer">
@@ -65,6 +67,7 @@ const form = reactive({
 const rememberMe = ref(false)
 const loading = ref(false)
 const formRef = ref()
+const shake = ref(false)
 
 const rules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
@@ -87,6 +90,9 @@ const handleLogin = async () => {
           router.push('/dashboard')
         }
       } catch (error: any) {
+        // 触发表单抖动以提示错误
+        shake.value = true
+        setTimeout(() => { shake.value = false }, 700)
         ElMessage.error(error.message || '登录失败')
       } finally {
         loading.value = false
@@ -102,7 +108,18 @@ const handleLogin = async () => {
   justify-content: center;
   align-items: center;
   height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.auth-bg {
+  background: linear-gradient(90deg, #F7D6C1 0%, #E0AFA0 20%, #D6B77A 40%, #9BB7D4 60%, #C39BD4 80%, #F6D6A9 100%);
+  background-size: 200% 100%;
+  animation: gradientShift 12s ease infinite;
+}
+
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
 }
 
 .login-box {
@@ -114,20 +131,40 @@ const handleLogin = async () => {
   max-width: 400px;
 }
 
+/* Ensure header and action buttons share the same centerline */
+.login-box { display: flex; flex-direction: column; align-items: center }
+.login-box form, .login-box .el-form { width: 100% }
+.login-header, .action-row { width: 100%; display:flex; justify-content:center; align-items:center }
+
+.login-box.shake {
+  animation: shake 0.7s cubic-bezier(.36,.07,.19,.97) both;
+}
+
+@keyframes shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-4px); }
+  40%, 60% { transform: translateX(4px); }
+}
+
 .login-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
-  margin-bottom: 30px;
+  margin-bottom: 14px; /* 更紧凑，副标题紧贴标题下方 */
 }
 
 .login-header h1 {
-  font-size: 28px;
-  color: #667eea;
-  margin-bottom: 10px;
+  font-size: 30px;
+  color: #C39BD4; /* 复古色 - 标题 */
+  margin: 0; /* 清除默认 margin，确保副标题在正下方 */
 }
 
 .login-header p {
-  color: #999;
+  color: #9BB7D4; /* 副标题复古调 */
   font-size: 14px;
+  margin: 4px 0 0 0; /* 直接在标题正下方 */
 }
 
 .form-footer {
@@ -138,7 +175,7 @@ const handleLogin = async () => {
 }
 
 .register-link {
-  color: #667eea;
+  color: #D6B77A; /* 链接使用和谐复古色 */
   text-decoration: none;
   cursor: pointer;
 }
@@ -146,4 +183,17 @@ const handleLogin = async () => {
 .register-link:hover {
   text-decoration: underline;
 }
+
+.action-row { display:flex; justify-content:center; }
+.primary-action {
+  width: 260px;
+  height: 56px;
+  font-size: 18px;
+  border-radius: 10px;
+  color: #fff !important;
+  background: linear-gradient(90deg, #C39BD4 0%, #9BB7D4 60%) !important;
+  box-shadow: 0 10px 30px rgba(195,155,212,0.18);
+  border: none !important;
+}
+.primary-action:active { transform: translateY(1px); }
 </style>

@@ -48,124 +48,162 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import * as echarts from 'echarts'
+import { useTaskStore } from '@/store/task'
 import ChartCard from '@/components/ChartCard.vue'
 import { ElMessage } from 'element-plus'
+import { getTimeDistribution, getCompletionTrend, getDailyFocus, getEstimateVsActual, getTopTasks } from '@/api/stats'
 
+const taskStore = useTaskStore()
 const dateRange = ref([new Date(new Date().getTime() - 7 * 24 * 60 * 60 * 1000), new Date()])
-const topTasks = ref([
-  { id: 1, title: '项目报告', duration: 15 },
-  { id: 2, title: '代码审查', duration: 12 },
-  { id: 3, title: '需求分析', duration: 10 },
-  { id: 4, title: '会议', duration: 8 },
-  { id: 5, title: '文档编写', duration: 6 },
-])
+const topTasks = ref<any[]>([])
 
-onMounted(() => {
+let chartTimeDistribution: any = null
+let chartCompletionTrend: any = null
+let chartDailyFocus: any = null
+let chartEstimateVsActual: any = null
+
+onMounted(async () => {
+  await taskStore.fetchCategories()
+  await taskStore.fetchTasks()
   initCharts()
+  updateAllCharts()
+})
+
+watch(dateRange, () => {
+  updateAllCharts()
 })
 
 const initCharts = () => {
-  // 时间分配饼图
-  const timeDistribution = echarts.init(document.getElementById('timeDistribution'))
-  timeDistribution.setOption({
-    tooltip: { trigger: 'item' },
-    legend: {
-      orient: 'vertical',
-      left: 'left',
-    },
-    series: [
-      {
-        name: 'Access From',
-        type: 'pie',
-        radius: '50%',
-        data: [
-          { value: 1048, name: '工作' },
-          { value: 735, name: '学习' },
-          { value: 580, name: '运动' },
-          { value: 484, name: '休息' },
-          { value: 300, name: '其他' },
-        ],
-        emphasis: {
-          itemStyle: {
-            shadowBlur: 10,
-            shadowOffsetX: 0,
-            shadowColor: 'rgba(0, 0, 0, 0.5)',
-          },
-        },
-      },
-    ],
-  })
+  chartTimeDistribution = echarts.init(document.getElementById('timeDistribution') as HTMLElement)
+  chartCompletionTrend = echarts.init(document.getElementById('completionTrend') as HTMLElement)
+  chartDailyFocus = echarts.init(document.getElementById('dailyFocus') as HTMLElement)
+  chartEstimateVsActual = echarts.init(document.getElementById('estimateVsActual') as HTMLElement)
+}
 
-  // 任务完成率趋势
-  const completionTrend = echarts.init(document.getElementById('completionTrend'))
-  completionTrend.setOption({
-    xAxis: {
-      type: 'category',
-      data: ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
-    },
-    yAxis: {
-      type: 'value',
-    },
-    series: [
-      {
-        data: [80, 85, 75, 90, 88, 92, 87],
-        type: 'line',
-        smooth: true,
-        itemStyle: { color: '#409eff' },
-        areaStyle: { color: 'rgba(64, 158, 255, 0.3)' },
-      },
-    ],
-  })
+const getRangeDays = (range: any[]) => {
+  const start = new Date(range[0])
+  const end = new Date(range[1])
+  const days: string[] = []
+  const cur = new Date(start)
+  while (cur <= end) {
+    days.push(cur.toISOString().slice(0, 10))
+    cur.setDate(cur.getDate() + 1)
+  }
+  return days
+}
 
-  // 每日专注时长
-  const dailyFocus = echarts.init(document.getElementById('dailyFocus'))
-  dailyFocus.setOption({
-    xAxis: {
-      type: 'category',
-      data: ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
-    },
-    yAxis: {
-      type: 'value',
-    },
-    series: [
-      {
-        data: [4, 5, 3, 6, 4, 3, 3],
-        type: 'bar',
-        itemStyle: { color: '#67C23A' },
-      },
-    ],
-  })
+const updateAllCharts = async () => {
+  const categories = taskStore.categories || []
+  const [start, end] = dateRange.value
+  const startStr = new Date(start).toISOString().slice(0,10)
+  const endStr = new Date(end).toISOString().slice(0,10)
 
-  // 预估 vs 实际耗时
-  const estimateVsActual = echarts.init(document.getElementById('estimateVsActual'))
-  estimateVsActual.setOption({
-    xAxis: {
-      type: 'category',
-      data: ['项目A', '项目B', '项目C', '项目D', '项目E'],
-    },
-    yAxis: {
-      type: 'value',
-    },
-    series: [
-      {
-        name: '预估',
-        data: [20, 30, 25, 35, 28],
-        type: 'bar',
-        itemStyle: { color: '#409eff' },
+  try {
+    const resTD: any = await getTimeDistribution(startStr, endStr)
+    const td = (resTD && (resTD.data || resTD)) || []
+    const pieData = (td || []).map((r: any) => ({ name: r.name || r.key || r["name"] || '未分类', value: Number(r.value || r.count || 0) }))
+    const pieColors = (pieData || []).map((p: any) => {
+      const cat = categories.find((c: any) => String(c.name) === String(p.name) || String(c.id) === String(p.name))
+      return (cat && cat.color) || undefined
+    })
+    chartTimeDistribution.setOption({ tooltip: { trigger: 'item' }, legend: { orient: 'vertical', left: 'left' }, series: [{ name: '时间分配', type: 'pie', radius: '50%', data: pieData, color: pieColors }] })
+  } catch (e) {
+    console.error('time distribution load failed', e)
+  }
+
+  try {
+    const resCT: any = await getCompletionTrend(startStr, endStr)
+    const payload = (resCT && (resCT.data || resCT)) || { dates: [], completed: [], total: [] }
+    const dates = payload.dates || []
+    const completed = payload.completed || []
+    const total = payload.total || []
+    chartCompletionTrend.setOption({
+      tooltip: {
+        trigger: 'axis',
+        formatter: (params: any) => {
+          const idx = params && params[0] && params[0].dataIndex ? params[0].dataIndex : 0
+          const d = dates[idx] || ''
+          const comp = completed[idx] || 0
+          const tot = total[idx] || 0
+          return `${d}<br/>完成：${comp}<br/>创建：${tot}`
+        }
       },
-      {
-        name: '实际',
-        data: [22, 28, 28, 32, 30],
-        type: 'bar',
-        itemStyle: { color: '#f56c6c' },
+      xAxis: { type: 'category', data: dates.map((d: string) => d.slice(5)) },
+      yAxis: { type: 'value' },
+      series: [
+        { name: '完成', data: completed, type: 'line', smooth: true, itemStyle: { color: '#409eff' }, areaStyle: { color: 'rgba(64, 158, 255, 0.18)' } },
+        { name: '创建', data: total, type: 'line', smooth: true, itemStyle: { color: '#67C23A' } }
+      ]
+    })
+  } catch (e) {
+    console.error('completion trend load failed', e)
+  }
+
+  try {
+    const resDF: any = await getDailyFocus(startStr, endStr)
+    const payload = (resDF && (resDF.data || resDF)) || { dates: [], minutes: [] }
+    const dates = payload.dates || []
+    const minutes = payload.minutes || []
+    chartDailyFocus.setOption({
+      tooltip: {
+        trigger: 'axis',
+        formatter: (params: any) => {
+          const idx = params && params[0] && params[0].dataIndex ? params[0].dataIndex : 0
+          const d = dates[idx] || ''
+          const m = (minutes[idx] || 0)
+          return `${d}<br/>专注时长：${m} 分钟`
+        }
       },
-    ],
-    legend: {
-      data: ['预估', '实际'],
-    },
-  })
+      xAxis: { type: 'category', data: dates.map((d: string) => d.slice(5)) },
+      yAxis: { type: 'value' },
+      series: [{ data: (minutes || []).map((m: any) => Math.round((m || 0) * 100) / 100), type: 'bar', itemStyle: { color: '#67C23A' } }]
+    })
+  } catch (e) {
+    console.error('daily focus load failed', e)
+  }
+
+  try {
+    const resEA: any = await getEstimateVsActual(startStr, endStr)
+    const payload = (resEA && (resEA.data || resEA)) || []
+    // payload likely contains task rows: { title, estimated, actual }
+    const list = (payload || []).map((r: any) => ({ name: r.title || r.name || '未知', est: Number(r.estimated || r.estimated || 0), act: Number(r.actual || r.actual || 0) }))
+      .sort((a: any,b: any) => (b.act || 0) - (a.act || 0)).slice(0,5)
+
+    chartEstimateVsActual.setOption({
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: (params: any) => {
+          // params[0] = 预估(hours), params[1] = 实际(hours)
+          const name = params && params[0] && params[0].axisValue ? params[0].axisValue : ''
+          const estHours = params && params[0] ? params[0].value : 0
+          const actHours = params && params[1] ? params[1].value : 0
+          const estMin = Math.round(estHours * 60)
+          const actMin = Math.round(actHours * 60)
+          return `${name}<br/>预估：${estHours} 小时 (${estMin} 分钟)<br/>实际：${actHours} 小时 (${actMin} 分钟)`
+        }
+      },
+      xAxis: { type: 'category', data: list.map((c: any) => c.name) },
+      yAxis: { type: 'value' },
+      series: [ { name: '预估', type: 'bar', data: list.map((c: any) => Math.round((c.est/60)*100)/100), itemStyle: { color: '#409eff' } }, { name: '实际', type: 'bar', data: list.map((c: any) => Math.round((c.act/60)*100)/100), itemStyle: { color: '#f56c6c' } } ],
+      legend: { data: ['预估','实际'] }
+    })
+
+    // 使用后端按 time_record 聚合的 Top Tasks，优先调用专用接口
+    try {
+      const resTop: any = await getTopTasks(startStr, endStr, 10)
+      const topPayload = (resTop && (resTop.data || resTop)) || []
+      topTasks.value = (topPayload || []).map((r: any) => ({ id: r.taskId || r.id || r.title, title: r.title || r.name || '未知', duration: Math.round(((Number(r.totalMinutes || r.total || 0) || 0)/60)*100)/100 }))
+    } catch (err) {
+      console.error('load top tasks failed', err)
+      // fallback: use estimate-vs-actual list
+      topTasks.value = (list || []).map((t: any) => ({ id: t.name, title: t.name, duration: Math.round(((t.act||0)/60)*100)/100 }))
+    }
+  } catch (e) {
+    console.error('estimate vs actual load failed', e)
+  }
 }
 
 const onDateRangeChange = () => {

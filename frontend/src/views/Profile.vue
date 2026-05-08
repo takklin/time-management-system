@@ -50,64 +50,68 @@
           <el-button type="primary" @click="changePassword">修改密码</el-button>
         </el-form>
       </el-card>
+      <!-- 管理员无需看到分类管理与数据管理 -->
+      <template v-if="!isAdmin">
+        <el-card class="profile-card">
+          <template #header>
+            <div class="card-header">
+              <span>分类管理</span>
+            </div>
+          </template>
 
-      <el-card class="profile-card">
-        <template #header>
-          <div class="card-header">
-            <span>分类管理</span>
+          <div class="categories-list">
+            <div v-for="category in categories" :key="category.id" class="category-item">
+              <div class="category-color" :style="{ backgroundColor: category.color }"></div>
+              <span class="category-name">{{ category.name }}</span>
+              <el-button type="danger" link size="small" @click="handleDelete(category.id)">删除</el-button>
+            </div>
           </div>
-        </template>
 
-        <div class="categories-list">
-          <div v-for="category in categories" :key="category.id" class="category-item">
-            <div class="category-color" :style="{ backgroundColor: category.color }"></div>
-            <span class="category-name">{{ category.name }}</span>
-            <el-button type="danger" link size="small" @click="deleteCategory(category.id)">删除</el-button>
+          <el-divider />
+
+          <div class="add-category">
+            <el-input v-model="newCategory.name" placeholder="输入分类名称" style="width: 150px" />
+            <el-color-picker v-model="newCategory.color" show-alpha />
+            <el-button type="primary" @click="addCategory">添加分类</el-button>
           </div>
-        </div>
+        </el-card>
 
-        <el-divider />
+        <el-card class="profile-card">
+          <template #header>
+            <div class="card-header">
+              <span>数据管理</span>
+            </div>
+          </template>
 
-        <div class="add-category">
-          <el-input v-model="newCategory.name" placeholder="输入分类名称" style="width: 150px" />
-          <el-color-picker v-model="newCategory.color" show-alpha />
-          <el-button type="primary" @click="addCategory">添加分类</el-button>
-        </div>
-      </el-card>
-
-      <el-card class="profile-card">
-        <template #header>
-          <div class="card-header">
-            <span>数据管理</span>
+          <div class="data-actions">
+            <el-button @click="exportData">导出数据</el-button>
+            <el-button @click="importData">导入数据</el-button>
+            <el-button type="danger" @click="deleteAccount">删除账号</el-button>
           </div>
-        </template>
-
-        <div class="data-actions">
-          <el-button @click="exportData">导出数据</el-button>
-          <el-button @click="importData">导入数据</el-button>
-          <el-button type="danger" @click="deleteAccount">删除账号</el-button>
-        </div>
-      </el-card>
+        </el-card>
+      </template>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { useUserStore } from '@/store/user'
 import { getCategories, createCategory, deleteCategory as apiDeleteCategory } from '@/api/tasks'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const userStore = useUserStore()
 
-const userAvatar = ref('https://cube.elemecdn.com/0/88/03b0f476b6411127aa8e8b9be76153.jpeg')
+const isAdmin = computed(() => ((userStore.user?.role || '').toLowerCase() === 'admin'))
+
+const userAvatar = ref('/api/v1/auth/avatar/placeholder.png')
 
 const formData = reactive({
   email: userStore.user?.email || '',
   nickname: '',
 })
 
-const categories = ref([] as Array<{ id: number; name: string; color: string }>)
+const categories = ref([] as Array<{ id: string | number; name: string; color: string }>)
 
 const newCategory = reactive({
   name: '',
@@ -125,7 +129,9 @@ const passwordForm = reactive({
 const fetchCategories = async () => {
   try {
     const response: any = await getCategories()
-    categories.value = response.data || response
+    const raw = response.data || response
+    const arr = Array.isArray(raw) ? raw : (raw && raw.data ? raw.data : [])
+    categories.value = (arr as any[]).map((c: any) => ({ id: String(c.id), name: c.name, color: c.color }))
   } catch (error) {
     console.error('获取分类失败', error)
     ElMessage.error('获取分类失败')
@@ -228,7 +234,7 @@ const addCategory = async () => {
   }
 }
 
-const deleteCategory = (id: number) => {
+const handleDelete = async (id: number) => {
   ElMessageBox.confirm('确定要删除此分类吗？', '提示', {
     confirmButtonText: '确定',
     cancelButtonText: '取消',
@@ -239,8 +245,17 @@ const deleteCategory = (id: number) => {
         await apiDeleteCategory(id)
         await fetchCategories()
         ElMessage.success('分类删除成功')
-      } catch (error) {
+      } catch (error: any) {
         console.error('删除分类失败', error)
+        // 处理后端返回的 404（未找到或无权限）为友好提示并刷新列表
+        // 后端可能以 HTTP 200 返回 { code: 404, msg: '...' }，utils/request 会抛出 Error(message)
+        const isNotFound = (error && error.response && error.response.status === 404) ||
+          (error && error.message && /未找到|无权限/.test(error.message))
+        if (isNotFound) {
+          try { await fetchCategories() } catch (_) {}
+          ElMessage.warning('分类不存在或无权限删除，已刷新列表')
+          return
+        }
         ElMessage.error('删除分类失败')
       }
     })
