@@ -1,100 +1,113 @@
 package com.timemanager.controller.admin;
 
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.timemanager.common.result.Result;
 import com.timemanager.entity.SystemConfig;
+import com.timemanager.service.OperationLogService;
 import com.timemanager.service.SystemConfigService;
+import com.timemanager.util.UserUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.HashMap;
-import java.util.Map;
+import javax.servlet.http.HttpServletRequest;
+import java.time.LocalDateTime;
+import java.util.*;
 
 /**
- * 系统配置管理Controller
+ * 系统配置管理（Admin）
  */
 @RestController
 @RequestMapping("/api/v1/admin/config")
 public class SystemConfigController {
-    
+    private static final Logger logger = LoggerFactory.getLogger(SystemConfigController.class);
+
     @Autowired
     private SystemConfigService systemConfigService;
-    
+
+    @Autowired
+    private OperationLogService operationLogService;
+
+    private static final Map<String, String> DEFAULTS = Map.of(
+        "allow_registration", "true",
+        "default_task_reminder_minutes", "30",
+        "max_timer_minutes", "480",
+        "log_retention_days", "90"
+    );
+
+    private static final Map<String, String> DESCRIPTIONS = Map.of(
+        "allow_registration", "是否开放新用户注册",
+        "default_task_reminder_minutes", "任务截止前默认提醒分钟数",
+        "max_timer_minutes", "单次计时最大分钟数（防误操作）",
+        "log_retention_days", "操作日志保留天数（自动清理)"
+    );
+
     /**
-     * 获取所有配置
+     * 列出所有系统配置；如果缺少关键配置则以默认值创建
      */
-    @GetMapping("/all")
-    public Result<Map<String, Object>> getAllConfigs() {
-        Map<String, Object> configMap = new HashMap<>();
-        systemConfigService.list().forEach(config -> 
-            configMap.put(config.getConfigKey(), config.getConfigValue())
-        );
-        return Result.success(configMap);
+    @GetMapping("/list")
+    public Result<List<SystemConfig>> listConfigs() {
+        try {
+            // ensure defaults exist
+            for (Map.Entry<String, String> e : DEFAULTS.entrySet()) {
+                String key = e.getKey();
+                String val = systemConfigService.getConfigValue(key);
+                if (val == null) {
+                    SystemConfig cfg = new SystemConfig();
+                    cfg.setConfigKey(key);
+                    cfg.setConfigValue(e.getValue());
+                    cfg.setDescription(DESCRIPTIONS.getOrDefault(key, null));
+                    cfg.setCreatedAt(LocalDateTime.now());
+                    cfg.setUpdatedAt(LocalDateTime.now());
+                    try { systemConfigService.save(cfg); } catch (Exception ex) { logger.warn("无法创建默认配置 {}", key, ex); }
+                }
+            }
+
+            List<SystemConfig> list = systemConfigService.list();
+            // sort by configKey for stable UI
+            list.sort(Comparator.comparing(SystemConfig::getConfigKey));
+            return Result.success(list);
+        } catch (Exception ex) {
+            logger.error("listConfigs failed", ex);
+            return Result.error(500, "读取系统配置失败: " + ex.getMessage());
+        }
     }
-    
+
     /**
-     * 获取单个配置
+     * 更新单个配置项（存在则更新，否则插入）
      */
-    @GetMapping("/{configKey}")
-    public Result<SystemConfig> getConfig(@PathVariable String configKey) {
-        SystemConfig config = systemConfigService.getOne(
-            new QueryWrapper<SystemConfig>()
-                .eq("config_key", configKey)
-        );
-        if (config != null) {
-            return Result.success(config);
+    @PostMapping("/update")
+    public Result<Boolean> updateConfig(@RequestBody Map<String, String> body, HttpServletRequest request) {
+        try {
+            String key = body.get("configKey");
+            String value = body.get("configValue");
+            if (key == null || value == null) return Result.error(400, "缺少 configKey 或 configValue");
+
+            boolean ok = systemConfigService.updateConfig(key, value);
+            if (!ok) {
+                // insert new
+                SystemConfig cfg = new SystemConfig();
+                cfg.setConfigKey(key);
+                cfg.setConfigValue(value);
+                cfg.setDescription(DESCRIPTIONS.getOrDefault(key, null));
+                cfg.setCreatedAt(LocalDateTime.now());
+                cfg.setUpdatedAt(LocalDateTime.now());
+                ok = systemConfigService.save(cfg);
+            }
+
+            // 记录操作日志
+            String operator = UserUtil.getCurrentUsername();
+            String ip = request != null ? (request.getHeader("X-Forwarded-For")==null?request.getRemoteAddr():request.getHeader("X-Forwarded-For")) : null;
+            String ua = request != null ? request.getHeader("User-Agent") : null;
+            try {
+                operationLogService.recordOperation(operator, "UPDATE_CONFIG", "key:" + key + " value:" + value, ok ? "SUCCESS" : "FAILED", ip, ua);
+            } catch (Exception ignored) {}
+
+            return Result.success(ok);
+        } catch (Exception ex) {
+            logger.error("updateConfig failed", ex);
+            return Result.error(500, "更新配置失败: " + ex.getMessage());
         }
-        return Result.error(404, "配置不存在");
-    }
-    
-    /**
-     * 更新配置
-     */
-    @PutMapping("/{configKey}")
-    public Result<Boolean> updateConfig(
-        @PathVariable String configKey,
-        @RequestBody Map<String, String> request
-    ) {
-        String configValue = request.get("configValue");
-        if (configValue == null) {
-            return Result.error(400, "配置值不能为空");
-        }
-        
-        boolean result = systemConfigService.updateConfig(configKey, configValue);
-        if (result) {
-            return Result.success(true);
-        }
-        return Result.error(500, "更新失败");
-    }
-    
-    /**
-     * 添加新配置
-     */
-    @PostMapping
-    public Result<SystemConfig> createConfig(@RequestBody SystemConfig config) {
-        if (config.getConfigKey() == null || config.getConfigKey().trim().isEmpty()) {
-            return Result.error(400, "配置键不能为空");
-        }
-        
-        boolean saved = systemConfigService.save(config);
-        if (saved) {
-            return Result.success(config);
-        }
-        return Result.error(500, "创建失败");
-    }
-    
-    /**
-     * 删除配置
-     */
-    @DeleteMapping("/{configKey}")
-    public Result<Boolean> deleteConfig(@PathVariable String configKey) {
-        boolean result = systemConfigService.remove(
-            new QueryWrapper<SystemConfig>()
-                .eq("config_key", configKey)
-        );
-        if (result) {
-            return Result.success(true);
-        }
-        return Result.error(500, "删除失败");
     }
 }
+

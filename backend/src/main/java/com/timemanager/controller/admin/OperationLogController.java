@@ -22,6 +22,7 @@ public class OperationLogController {
     @Autowired
     private OperationLogService logService;
 
+
     /**
      * 获取操作日志列表（支持筛选和分页）
      */
@@ -73,5 +74,39 @@ public class OperationLogController {
         List<Map<String, Object>> stats = new ArrayList<>();
         // 占位符实现
         return Result.success(stats);
+    }
+
+    /**
+     * 手动触发异常检测（用于调试或计划任务触发）
+     */
+    @PostMapping("/detect-anomalies")
+    public Result<Boolean> detectAnomalies() {
+        try {
+            logService.detectAnomalies();
+            return Result.success(true);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Result.error(500, "检测异常失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 插入演示用的高危/超高风险日志，便于前端演示（会使用 recordOperation 来确保风险判定与预警生成）
+     */
+    @PostMapping("/seed-demo")
+    public Result<Boolean> seedDemoLogs() {
+        try {
+            // 几条示例记录：删除、批量删除、授予管理员（均标记为 success） -> 应触发 high/critical
+            logService.recordOperation("demo_admin", "DELETE_USER", "user:1001", "success", "127.0.0.1", "DemoAgent/1.0");
+            logService.recordOperation("demo_admin", "BATCH_DELETE", "tasks", "success", "127.0.0.1", "DemoAgent/1.0");
+            logService.recordOperation("demo_admin", "GRANT_ADMIN", "user:1002", "success", "127.0.0.1", "DemoAgent/1.0");
+            // 一条失败登录示例
+            logService.recordOperation("demo_user", "LOGIN", "login", "fail", "192.168.100.50", "DemoUA/1.0");
+
+            return Result.success(true);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Result.error(500, "生成示例数据失败: " + e.getMessage());
+        }
     }
 }

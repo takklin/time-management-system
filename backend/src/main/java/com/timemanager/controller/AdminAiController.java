@@ -51,8 +51,15 @@ public class AdminAiController {
             sessionId = java.util.UUID.randomUUID().toString();
             request.setSessionId(sessionId);
         }
-        AdminAiService.AdminQueryResponse response = 
-            adminAiService.handleNaturalLanguageQuery(request.getQuestion(), sessionId);
+        // 如果前端传入了上下文或会话消息，则使用带上下文的处理方法
+        if (request.getContext() != null || request.getMessages() != null) {
+            AdminAiService.AdminQueryResponse response = adminAiService.handleNaturalLanguageQueryWithContext(
+                request.getQuestion(), sessionId, request.getMessages(), request.getContext()
+            );
+            return Result.success(response);
+        }
+
+        AdminAiService.AdminQueryResponse response = adminAiService.handleNaturalLanguageQuery(request.getQuestion(), sessionId);
         return Result.success(response);
     }
     
@@ -64,6 +71,22 @@ public class AdminAiController {
     public Result<List<AiAlert>> getUnhandledAlerts() {
         List<AiAlert> alerts = adminAiService.getUnhandledAlerts();
         return Result.success(alerts);
+    }
+
+    /**
+     * 获取危险日志摘要
+     * GET /api/v1/admin/ai/alerts/danger-summary
+     */
+    @GetMapping("/alerts/danger-summary")
+    public Result<com.timemanager.ai.dto.DangerLogSummary> getDangerSummary(HttpServletRequest httpRequest) {
+        // 只允许管理员访问
+        Object roleObj = httpRequest.getAttribute("role");
+        String role = roleObj != null ? roleObj.toString() : null;
+        if (role == null || !role.equalsIgnoreCase("ADMIN")) {
+            return Result.error(403, "仅管理员可用该接口");
+        }
+        com.timemanager.ai.dto.DangerLogSummary summary = adminAiService.getDangerSummary();
+        return Result.success(summary);
     }
     
     /**
@@ -92,6 +115,8 @@ public class AdminAiController {
     public static class QueryRequest {
         private String question;      // 用户问题（必需）
         private String sessionId;     // 会话ID（可选，用于维持对话上下文）
+        private java.util.Map<String, Object> context; // 可选：传入的额外上下文（如 danger_summary）
+        private java.util.List<java.util.Map<String, Object>> messages; // 可选：前端会话历史（role/content 列表）
     }
     
     @Data

@@ -35,12 +35,23 @@ public class SystemStatController {
     @Autowired
     private OperationLogService operationLogService;
 
+    // 简单的内存缓存，1 分钟过期，避免频繁全表聚合查询
+    private volatile SystemStatisticsVO cachedStatistics = null;
+    private volatile long cachedAtMillis = 0L;
+    private static final long STAT_CACHE_MS = 60 * 1000L; // 1 minute
+
     /**
      * 获取完整的系统统计数据
      */
     @GetMapping("/statistics")
     public Result<SystemStatisticsVO> getFullStatistics(
             @RequestParam(defaultValue = "30") int days) {
+
+        long now = System.currentTimeMillis();
+        // 简单并发保护
+        if (cachedStatistics != null && (now - cachedAtMillis) < STAT_CACHE_MS) {
+            return Result.success(cachedStatistics);
+        }
 
         SystemStatisticsVO statistics = new SystemStatisticsVO();
 
@@ -54,7 +65,7 @@ public class SystemStatController {
         statistics.setTaskTrend(getTaskTrendData(days));
 
         // 专注热力图
-        statistics.setFocusHeatmap(getFocusHeatmapData());
+        statistics.setFocusHeatmap(statisticsDataService.getFocusHeatmapData());
 
         // 分类排行
         statistics.setCategoryRanking(statisticsDataService.getCategoryRanking());
@@ -64,6 +75,10 @@ public class SystemStatController {
 
         // 概览
         statistics.setOverview(getOverviewStats());
+
+        // 更新缓存
+        cachedStatistics = statistics;
+        cachedAtMillis = System.currentTimeMillis();
 
         return Result.success(statistics);
     }
@@ -165,11 +180,14 @@ public class SystemStatController {
         for (int i = days - 1; i >= 0; i--) {
             LocalDate date = now.minusDays(i);
             int dau = userMapper.countActiveUserByDate(date.toString());
+            String startWeek = date.minusDays(6).toString();
+            String endWeek = date.toString();
+            int wau = userMapper.countActiveUsersBetween(startWeek, endWeek);
 
             Map<String, Object> item = new HashMap<>();
             item.put("date", date.toString());
             item.put("dau", dau);
-            item.put("wau", dau); // 简化版，实际需要计算周活
+            item.put("wau", wau);
 
             data.add(item);
         }
@@ -204,27 +222,7 @@ public class SystemStatController {
         return data;
     }
 
-    /**
-     * 获取专注热力图数据
-     */
-    private List<Map<String, Object>> getFocusHeatmapData() {
-        List<Map<String, Object>> data = new ArrayList<>();
-
-        // 生成24小时 × 7天的热力图数据
-        for (int dayOfWeek = 1; dayOfWeek <= 7; dayOfWeek++) {
-            for (int hour = 0; hour < 24; hour++) {
-                Map<String, Object> item = new HashMap<>();
-                item.put("dayOfWeek", dayOfWeek);
-                item.put("hour", hour);
-                // 实际数据需要从time_record表查询统计
-                item.put("value", (int) (Math.random() * 100)); // 示例数据
-
-                data.add(item);
-            }
-        }
-
-        return data;
-    }
+    
 
     /**
      * 获取概览统计
