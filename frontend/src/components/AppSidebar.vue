@@ -14,9 +14,19 @@
     </nav>
 
     <div class="sidebar-footer">
-      <div class="footer-section">
-        <p class="section-title">快速操作</p>
-        <el-button type="primary" size="small" block @click="quickAddTask">+ 新建任务</el-button>
+      <div v-if="isAdminRoute">
+        <div class="footer-section">
+          <p class="section-title">快捷操作</p>
+          <el-button type="primary" size="small" block @click="goBackup">数据库备份</el-button>
+          <el-button type="info" size="small" block @click="goConfig" style="margin-top:8px">系统配置</el-button>
+          <el-button type="warning" size="small" block @click="goLogs" style="margin-top:8px">操作日志</el-button>
+        </div>
+      </div>
+      <div v-else>
+        <div class="footer-section">
+          <p class="section-title">快速操作</p>
+          <el-button type="primary" size="small" block @click="quickAddTask">+ 新建任务</el-button>
+        </div>
       </div>
     </div>
   </aside>
@@ -91,6 +101,22 @@ const quickAddTask = () => {
   ElMessage.info('快速添加任务功能开发中')
   router.push('/dashboard/tasks')
 }
+
+const goBackup = () => {
+  router.push('/admin/backup')
+}
+
+const goConfig = () => {
+  router.push('/admin/config')
+}
+
+const goLogs = () => {
+  router.push('/admin/logs')
+}
+
+const isAdminRoute = computed(() => {
+  return route.path.startsWith('/admin')
+})
 </script>
 
 <style scoped>

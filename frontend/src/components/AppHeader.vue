@@ -8,13 +8,13 @@
     </div>
 
     <div class="header-right">
-      <div class="search-box">
-        <el-input v-model="searchText" placeholder="搜索任务..." clearable>
-          <template #prefix>
-            <el-icon><Search /></el-icon>
-          </template>
-        </el-input>
-      </div>
+        <div class="search-box" v-if="showSearchBox">
+          <el-input v-model="searchText" placeholder="搜索任务..." clearable>
+            <template #prefix>
+              <el-icon><Search /></el-icon>
+            </template>
+          </el-input>
+        </div>
 
       <el-button type="primary" :text="true" @click="showNotifications">
         <el-icon><Bell /></el-icon>
@@ -40,19 +40,20 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '@/store/user'
 import { ElMessage } from 'element-plus'
 import { Search, Bell } from '@element-plus/icons-vue'
 
 const router = useRouter()
+const route = useRoute()
 const userStore = useUserStore()
 
 const searchText = ref('')
 const notificationCount = ref(0)
 
-const userAvatar = computed(() => {
-  const defaultAvatar = 'https://cube.elemecdn.com/0/88/03b0f476b6411127aa8e8b9be76153.jpeg'
+  const userAvatar = computed(() => {
+    const defaultAvatar = '/api/v1/auth/avatar/placeholder.png'
   const avatar = userStore.user?.avatar || ''
   if (!avatar) {
     return defaultAvatar
@@ -76,13 +77,20 @@ const showNotifications = () => {
 }
 
 const goToProfile = () => {
-  router.push('/dashboard/profile')
+  const isAdmin = (userStore.user?.role || '').toLowerCase() === 'admin'
+  router.push(isAdmin ? '/admin/profile' : '/dashboard/profile')
 }
 
 const changePassword = () => {
-  // TODO: 实现修改密码功能
-  ElMessage.info('修改密码功能开发中')
+  // 跳转到个人中心，由个人中心内实现修改密码
+  const isAdmin = (userStore.user?.role || '').toLowerCase() === 'admin'
+  router.push(isAdmin ? '/admin/profile' : '/dashboard/profile')
 }
+
+const showSearchBox = computed(() => {
+  // 管理端路由（/admin/*）不显示顶部搜索
+  return !route.path.startsWith('/admin')
+})
 
 const logout = async () => {
   await userStore.logout()
