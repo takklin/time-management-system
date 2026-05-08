@@ -36,12 +36,15 @@
           <el-button type="success" @click="onExport">
             <el-icon><Download /></el-icon> 导出
           </el-button>
+          <el-button type="warning" @click="onSeedDemo">
+            生成演示数据
+          </el-button>
         </el-form-item>
       </el-form>
     </el-card>
 
     <!-- 数据表格 -->
-    <el-table
+      <el-table
       ref="tableRef"
       :data="tableData"
       stripe 
@@ -50,6 +53,7 @@
       style="width: 100%; margin-top: 16px;"
       @sort-change="onSortChange"
       @row-click="onRowClick"
+      :row-class-name="tableRowClass"
     >
       <el-table-column prop="id" label="ID" width="70" sortable="custom" />
       <el-table-column prop="operator" label="操作人" width="100" />
@@ -57,16 +61,17 @@
       <el-table-column prop="target" label="操作对象" width="120" />
       <el-table-column prop="result" label="结果" width="80">
         <template #default="{ row }">
-          <el-tag :type="row.result === 'success' ? 'success' : 'danger'">
-            {{ row.result === 'success' ? '成功' : '失败' }}
+          <el-tag :type="isResultSuccess(row.result) ? 'success' : 'danger'">
+            {{ isResultSuccess(row.result) ? '成功' : '失败' }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="riskLevel" label="风险等级" width="100">
+      <el-table-column prop="riskLevel" label="风险等级" width="140">
         <template #default="{ row }">
           <el-tag 
             :type="getRiskLevelType(row.riskLevel)"
             :effect="row.riskLevel === 'critical' ? 'dark' : 'light'"
+            :class="{ 'risk-badge-critical': row.riskLevel === 'critical' }"
           >
             {{ getRiskLevelText(row.riskLevel) }}
           </el-tag>
@@ -88,9 +93,7 @@
       :current-page="paginationData.page"
       :page-size="paginationData.pageSize"
       :total="paginationData.total"
-      layout="total, sizes, prev, pager, next, jumper"
-      :page-sizes="[10, 20, 50, 100]"
-      @size-change="onPageSizeChange"
+      layout="total, prev, pager, next, jumper"
       @current-change="onPageChange"
     />
 
@@ -103,8 +106,8 @@
           <el-descriptions-item label="操作类型">{{ detailLog.action }}</el-descriptions-item>
           <el-descriptions-item label="操作对象">{{ detailLog.target }}</el-descriptions-item>
           <el-descriptions-item label="操作结果">
-            <el-tag :type="detailLog.result === 'success' ? 'success' : 'danger'">
-              {{ detailLog.result === 'success' ? '成功' : '失败' }}
+            <el-tag :type="isResultSuccess(detailLog.result) ? 'success' : 'danger'">
+              {{ isResultSuccess(detailLog.result) ? '成功' : '失败' }}
             </el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="操作时间">{{ detailLog.createdAt }}</el-descriptions-item>
@@ -169,6 +172,25 @@ const parseUserAgent = (ua: string) => {
 }
 
 /**
+ * 判断操作结果是否为成功（大小写不敏感）
+ */
+const isResultSuccess = (result: any): boolean => {
+  if (!result && result !== 0) return false
+  const s = String(result).toLowerCase()
+  return s === 'success' || s === 'succeeded' || s === 'ok' || s === 'true'
+}
+
+/**
+ * 行样式：超高风险高亮整行
+ */
+const tableRowClass = ({ row }: { row: any }) => {
+  if (!row) return ''
+  if (row.riskLevel === 'critical') return 'row-critical'
+  if (row.riskLevel === 'high') return 'row-high'
+  return ''
+}
+
+/**
  * 获取风险等级的标签类型
  */
 const getRiskLevelType = (level: string): string => {
@@ -221,6 +243,9 @@ const loadLogs = async () => {
     
     const res: any = await logApi.getLogs(params)
     tableData.value = res.content || []
+    // 使用后端返回的分页元数据（如果有）以保持前后端一致
+    if (res.pageNum) paginationData.page = res.pageNum
+    if (res.pageSize) paginationData.pageSize = res.pageSize
     paginationData.total = res.total || 0
   } catch (error) {
     console.error('加载日志失败:', error)
@@ -294,12 +319,12 @@ const onExport = () => {
   }
   
   const header = ['ID', '操作人', '操作类型', '操作对象', '结果', 'IP地址', '操作时间']
-  const rows = tableData.value.map(log => [
+    const rows = tableData.value.map(log => [
     log.id,
     log.operator,
     log.action,
     log.target,
-    log.result === 'success' ? '成功' : '失败',
+    isResultSuccess(log.result) ? '成功' : '失败',
     log.ip || '--',
     log.createdAt
   ])
@@ -317,6 +342,24 @@ const onExport = () => {
   URL.revokeObjectURL(url)
   
   ElMessage.success('导出成功')
+}
+
+/**
+ * 生成演示用的高危/超高风险日志（会调用后端 seed 接口）
+ */
+const onSeedDemo = async () => {
+  try {
+    loading.value = true
+    await logApi.seedDemoLogs()
+    ElMessage.success('演示数据已生成，正在刷新列表')
+    paginationData.page = 1
+    await loadLogs()
+  } catch (err) {
+    console.error('生成演示数据失败', err)
+    ElMessage.error('生成演示数据失败')
+  } finally {
+    loading.value = false
+  }
 }
 
 /**
@@ -355,5 +398,27 @@ onMounted(() => {
 .user-agent {
   font-size: 12px;
   color: #666;
+}
+
+/* 超高风险整行高亮 */
+.row-critical {
+  background: linear-gradient(90deg, rgba(255,245,245,0.8), rgba(255,250,250,0.6));
+  border-left: 4px solid #f56c6c;
+}
+.row-high {
+  background: linear-gradient(90deg, rgba(255,250,240,0.8), rgba(255,252,240,0.6));
+  border-left: 4px solid #e6a23c;
+}
+
+/* 超高风险标签闪烁效果 */
+.risk-badge-critical {
+  box-shadow: 0 0 8px rgba(245,108,108,0.8);
+  animation: critical-blink 1.2s ease-in-out infinite;
+}
+
+@keyframes critical-blink {
+  0% { transform: translateY(0); box-shadow: 0 0 6px rgba(245,108,108,0.6); }
+  50% { transform: translateY(-1px); box-shadow: 0 0 12px rgba(255,82,82,0.95); }
+  100% { transform: translateY(0); box-shadow: 0 0 6px rgba(245,108,108,0.6); }
 }
 </style>

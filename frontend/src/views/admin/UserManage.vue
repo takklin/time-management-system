@@ -13,6 +13,7 @@
             <el-option label="注册天数" value="registrationDays" />
             <el-option label="完成率" value="completionRate" />
             <el-option label="最后活跃时间" value="lastActiveTime" />
+            <el-option label="使用时长" value="usageMinutes" />
           </el-select>
           <el-select v-model="query.orderType" placeholder="排序方式" style="width: 100px;">
             <el-option label="降序" value="desc" />
@@ -48,6 +49,12 @@
             <el-tag type="info" effect="plain">完成: {{ row.completedTaskCount }}</el-tag>
             <br />
             <el-tag type="warning" effect="plain">未完成: {{ row.uncompletedTaskCount }}</el-tag>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="使用时长" width="120">
+          <template #default="{ row }">
+            <span>{{ row.usageMinutes ?? 0 }} 分钟</span>
           </template>
         </el-table-column>
         
@@ -99,7 +106,7 @@
     </el-card>
 
     <!-- 用户详情抽屉 -->
-    <UserDetailDrawer v-if="selectedUser" :user="selectedUser" @close="selectedUser = null" />
+    <UserDetailDrawer v-if="selectedUser" :detail="selectedUser" @close="selectedUser = null" />
 
     <!-- 用户分析弹窗 -->
     <UserAnalyticsDialog v-if="analyticsUser" :user="analyticsUser" @close="analyticsUser = null" />
@@ -118,10 +125,11 @@ const route = useRoute()
 
 const query = reactive({
   page: 1,
-  size: 10,
+  size: 20,
   keyword: '',
   status: undefined as number | undefined,
-  orderBy: undefined as string | undefined,
+  // 默认按使用时长降序，使用时长长的排在前面
+  orderBy: 'usageMinutes' as string | undefined,
   orderType: 'desc'
 })
 
@@ -136,8 +144,12 @@ const loadUsers = async () => {
   try {
     const response = await userApi.getUserList(query as any)
     // 响应拦截器已提取data，直接访问 rows 和 total
-    users.value = (response as any)?.rows || []
-    total.value = (response as any)?.total || 0
+    const resp: any = response as any
+    users.value = resp?.rows || []
+    total.value = resp?.total || 0
+    // 如果后端返回分页元数据，使用后端值同步前端分页状态
+    if (resp?.pageNum) query.page = resp.pageNum
+    if (resp?.pageSize) query.size = resp.pageSize
   } catch (error: any) {
     console.error('加载用户列表失败:', error)
     ElMessage.error('加载用户列表失败：' + (error?.message || '请稍后重试'))
@@ -196,7 +208,14 @@ const resetPassword = async (row: any) => {
 }
 
 const openDetail = async (row: any) => {
-  selectedUser.value = row
+  try {
+    const res: any = await userApi.getUserDetail(row.id)
+    const data = (res && res.data) ? res.data : res
+    selectedUser.value = data.user ? data : data // detail object with user, tasks, timeRecords
+  } catch (error) {
+    console.error('获取用户详情失败', error)
+    ElMessage.error('获取用户详情失败')
+  }
 }
 
 const openAnalytics = async (row: any) => {

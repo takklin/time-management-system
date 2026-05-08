@@ -75,8 +75,8 @@
             异常预警（最近5条）
           </div>
           <ul class="alert-list">
-            <li v-for="alert in systemAlerts" :key="alert.id" :class="'alert-' + alert.severity">
-              <el-tag :type="alert.severity === 'critical' ? 'danger' : 'warning'" effect="dark" size="small">
+            <li v-for="alert in systemAlerts" :key="alert.id" :class="'alert-' + alert.severity" @click="onAlertClick(alert)" style="cursor:pointer">
+              <el-tag :type="alert.severity === 'critical' ? 'danger' : 'warning'" effect="dark" size="small" :class="{ 'risk-badge-critical': alert.severity === 'critical' }">
                 {{ alert.severity === 'critical' ? '超高风险' : '高危' }}
               </el-tag>
               <span class="alert-desc">{{ alert.description }}</span>
@@ -121,6 +121,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, nextTick, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { getSystemStat } from '@/api/admin/systemStat'
 import * as metricsApi from '@/api/admin/metrics'
 import * as alertApi from '@/api/admin/alert'
@@ -130,6 +131,7 @@ import { WarningFilled, Monitor } from '@element-plus/icons-vue'
 const stat = ref<any>({})
 const health = ref<any>({})
 const systemAlerts = ref<any[]>([])
+const router = useRouter()
 let refreshInterval: any = null
 
 const trendClass = (change: number) => {
@@ -230,6 +232,11 @@ const loadAlerts = async () => {
   }
 }
 
+const onAlertClick = (alert: any) => {
+  // 跳转到操作日志页面并按风险等级过滤
+  router.push({ path: '/admin/logs', query: { riskLevel: alert.severity } })
+}
+
 const loadDashboardData = async () => {
   await Promise.all([loadStat(), loadHealthMetrics(), loadAlerts()])
   await nextTick()
@@ -328,6 +335,13 @@ h2 {
 .alert-list li.alert-high {
   border-left-color: #e6a23c;
   background: #fdf6ec;
+}
+
+/* 仪表盘：超高风险闪烁 */
+.alert-list li.alert-critical {
+  border-left-color: #f56c6c;
+  background: linear-gradient(90deg, rgba(255,245,245,0.9), rgba(255,250,250,0.7));
+  animation: critical-blink 1.2s ease-in-out infinite;
 }
 
 .alert-list li.empty-state {
