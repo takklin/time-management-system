@@ -111,6 +111,12 @@ const routes: RouteRecordRaw[] = [
           component: () => import('@/views/admin/AIAssistant.vue'),
           meta: { title: 'AI 智能助手', roles: ['admin'] },
         },
+        {
+          path: 'profile',
+          name: 'AdminProfile',
+          component: () => import('@/views/Profile.vue'),
+          meta: { title: '个人中心', roles: ['admin'] },
+        },
     ],
   },
   {
