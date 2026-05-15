@@ -122,6 +122,7 @@ import { useRouter } from 'vue-router'
 import { useTodoStore } from '@/stores/todo'
 import { useTaskStore } from '@/store/task'
 import { useUserStore } from '@/store/user'
+import { useScheduleStore } from '@/store/schedule'
 import dayjs from 'dayjs'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as userAiApi from '@/api/user/ai'
@@ -147,9 +148,42 @@ const messagesContainer = ref<HTMLElement>()
 let messageIdCounter = 0
 
 const includeContext = ref(true)
+// 请求去重与处理跟踪（防止重复弹窗）
+const pendingRequests = new Map<string, string>() // requestId -> loadingMsgId
+const processedRequestIds = new Set<string>()
+// 本地建议去重（防止本地预解析与后端返回的重复弹窗）
+const recentLocalSuggestionHashes = new Set<string>()
+
+const hashScheduleSuggestion = (s: any) => {
+  try {
+    const t = s || {}
+    const st = t.startTime ? (new Date(t.startTime)).toISOString() : ''
+    const et = t.endTime ? (new Date(t.endTime)).toISOString() : ''
+    return `${(t.title||'').trim()}|${st}|${et}`
+  } catch (e) { return '' }
+}
+
+const hashTaskSuggestion = (s: any) => {
+  try {
+    const t = s || {}
+    const st = t.startTime ? (new Date(t.startTime)).toISOString() : (t.deadline ? (new Date(t.deadline)).toISOString() : '')
+    return `${(t.title||'').trim()}|${st}`
+  } catch (e) { return '' }
+}
 const todoStore = useTodoStore()
 const taskStore = useTaskStore()
+const scheduleStore = useScheduleStore()
 const userStore = useUserStore()
+const router = useRouter()
+
+// 简单工具：确保可安全将可能为单对象或数组的值转换为数组
+const toArray = (v: any) => {
+  if (!v) return []
+  return Array.isArray(v) ? v : [v]
+}
+
+// 中文数字映射（parseChineseNumber 使用）
+const cnNumMap: Record<string, number> = { '零':0,'一':1,'二':2,'两':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10 }
 
 // 关键词白名单：仅当用户消息包含这些关键词时，才自动触发创建任务/日程的弹窗
 const CREATE_TASK_KEYWORDS: string[] = [
@@ -208,14 +242,12 @@ const generateSessionId = (): string => {
 }
 
 // 欢迎消息与本地持久化恢复
-const loadChatHistory = () => {
+const loadChatHistory = async () => {
   initSessionId()
 
   // 恢复用户之前选择的模型，如果没有则默认为 'gpt-3.5'
   const savedModel = localStorage.getItem('ai_user_selected_model')
-  if (savedModel) {
-    selectedModel.value = savedModel
-  }
+  if (savedModel) selectedModel.value = savedModel
 
   // 恢复会话消息（按 sessionId）
   try {
@@ -223,95 +255,64 @@ const loadChatHistory = () => {
     const raw = localStorage.getItem(key)
     if (raw) {
       const parsed = JSON.parse(raw)
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        messages.value = parsed
-        // ensure messageIdCounter is ahead
-        try { messageIdCounter = Math.max(...parsed.map((m:any) => Number(m.id) || 0)) + 1 } catch(e) {}
-        return
+      if (Array.isArray(parsed)) {
+        messages.value = parsed.map((m: any) => ({
+          id: m.id ?? String(messageIdCounter++),
+          role: m.role ?? 'assistant',
+          type: m.type ?? 'text',
+          content: m.content ?? (m.type === 'text' ? '' : ''),
+          taskData: m.taskData ?? null,
+          scheduleData: m.scheduleData ?? null
+        }))
+        // 保证 messageIdCounter 大于已存在 id
+        const numericIds = messages.value.map(m => Number(m.id)).filter(n => !isNaN(n))
+        if (numericIds.length) messageIdCounter = Math.max(...numericIds) + 1
       }
+    } else {
+      // 默认欢迎消息
+      messages.value = [{
+        id: String(messageIdCounter++),
+        role: 'assistant',
+        type: 'text',
+        content: '👋 你好！我是你的 AI 助手。我可以帮你：\n• 💡 用自然语言创建任务\n• 📊 生成今日总结\n• 🔍 查询任务信息\n\n试试输入"帮我创建一个任务"吧！'
+      }]
     }
-  } catch (e) { console.warn('[AI助手] 恢复聊天记录失败', e) }
 
-  // 默认欢迎消息
-  messages.value = [{
-    id: String(messageIdCounter++),
-    role: 'assistant',
-    type: 'text',
-    content: '👋 你好！我是你的 AI 助手。我可以帮你：\n• 💡 用自然语言创建任务\n• 📊 生成今日总结\n• 🔍 查询任务信息\n\n试试输入"帮我创建一个任务"吧！'
-  }]
-}
-
-onMounted(async () => {
-  loadChatHistory()
-})
-
-// 监听用户切换/登录状态变化，重新加载当前用户的会话与历史
-watch(() => userStore.user?.id, (newId, oldId) => {
-  try {
-    if (newId !== oldId) {
-      loadChatHistory()
+    // 如果之前有 pending 的 AI 创建建议（后端触发时存入 sessionStorage），尝试在打开助手时导航并分发事件
+    const pendingTask = sessionStorage.getItem('ai_pending_create_task')
+    if (pendingTask) {
+      try {
+        const payload = JSON.parse(pendingTask)
+        await router.push('/dashboard/tasks')
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('ai-create-task', { detail: payload }))
+          sessionStorage.removeItem('ai_pending_create_task')
+        }, 220)
+      } catch (e) { console.warn('[AI助手] 恢复 pending create task 失败', e) }
     }
-  } catch (e) { console.warn('[AI助手] 用户切换时重新加载聊天历史失败', e) }
-})
 
-// 持久化消息，当 messages 变化时保存（按 session）
-watch(messages, (val) => {
-  try {
-    const key = 'ai_chat_history_' + sessionId.value
-    localStorage.setItem(key, JSON.stringify(val))
-  } catch (e) { console.warn('[AI助手] 保存聊天记录失败', e) }
-}, { deep: true })
-
-const scrollToBottom = async () => {
-  await nextTick()
-  if (messagesContainer.value) {
-    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
-  }
-}
-
-/**
- * 处理模型选择变更
- * 保存用户选择到 localStorage，下次打开浮窗时恢复
- */
-const onModelChange = (newModel: string) => {
-  localStorage.setItem('ai_user_selected_model', newModel)
-  console.log('[AI助手] 用户选择了模型:', newModel)
-  // 发送一条提示消息
-  messages.value.push({
-    id: String(messageIdCounter++),
-    role: 'assistant',
-    type: 'text',
-    content: `已切换到 ${newModel === 'gpt-3.5' ? 'ChatGPT3.5' : 'DeepSeek'} 模型`
-  })
-}
-
-const clearChatHistory = async () => {
-  try {
-    const res = await ElMessageBox.confirm('确认要清空当前会话的聊天记录吗？该操作不可恢复。', '清空聊天记录', { confirmButtonText: '清空', cancelButtonText: '取消', type: 'warning' })
-    const key = 'ai_chat_history_' + sessionId.value
-    messages.value = []
-    localStorage.removeItem(key)
-    ElMessage.success('聊天记录已清空')
+    const pendingSchedule = sessionStorage.getItem('ai_pending_create_schedule')
+    if (pendingSchedule) {
+      try {
+        const payload = JSON.parse(pendingSchedule)
+        await router.push('/dashboard/schedules')
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('ai-create-schedule', { detail: payload }))
+          sessionStorage.removeItem('ai_pending_create_schedule')
+        }, 220)
+      } catch (e) { console.warn('[AI助手] 恢复 pending create schedule 失败', e) }
+    }
   } catch (e) {
-    // 用户取消或操作失败，什么都不做
+    console.warn('[AI助手] 恢复历史失败', e)
   }
 }
 
-const router = useRouter()
-
-// 帮助将可能为 computed/ref 的分组统一为数组
-const toArray = (v: any) => {
-  try {
-    if (!v) return []
-    if (Array.isArray(v)) return v
-    if (v.value && Array.isArray(v.value)) return v.value
-    // 支持 Vue 的响应式 Proxy
-    const maybe = Array.from(v || [])
-    return Array.isArray(maybe) ? maybe : []
-  } catch (e) { return [] }
+// 处理模型选择变更：同步 UI 与 localStorage
+const onModelChange = (newModel: string) => {
+  selectedModel.value = newModel
+  try { localStorage.setItem('ai_user_selected_model', newModel) } catch (e) { /* ignore */ }
+  console.log('[AI助手] 用户选择了模型:', newModel)
 }
-
-const cnNumMap: Record<string, number> = { '零':0,'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10 }
 const parseChineseNumber = (s: string) => {
   if (!s) return NaN
   if (/^\d+$/.test(s)) return Number(s)
@@ -467,71 +468,45 @@ const sendMessage = async () => {
   // 先尝试解析是否为“创建日程/范围”意图（如“28号出差到30号”）
   const scheduleSuggestion = parseScheduleFromText(userMsg)
   if (scheduleSuggestion) {
-    // 先在消息区展示建议，但只有当用户有明确创建意图时才自动打开日程创建表单
-    messages.value.push({ id: String(messageIdCounter++), role: 'assistant', type: 'schedule', scheduleData: { ...scheduleSuggestion, startTime: new Date(scheduleSuggestion.startTime), endTime: new Date(scheduleSuggestion.endTime) } })
-    await scrollToBottom()
-    try {
-      if (isCreateScheduleIntent(userMsg)) {
-        sessionStorage.setItem('ai_pending_create_schedule', JSON.stringify(scheduleSuggestion))
-        await router.push('/dashboard/schedules')
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('ai-create-schedule', { detail: scheduleSuggestion }))
-          sessionStorage.removeItem('ai_pending_create_schedule')
-        }, 220)
-      }
-    } catch (err) { console.warn('导航或分发日程建议失败', err) }
+    // 本地解析到日程建议，但不再以卡片形式展示以避免重复弹窗。
+    // 后端返回 create_schedule 时会负责触发表单弹窗。
+    console.debug('[AI助手] 本地解析到日程建议（已禁用卡片显示）:', scheduleSuggestion)
+    // 可保留后续去重逻辑（用于防止同一建议短期内重复触发）
+    const schHash = hashScheduleSuggestion(scheduleSuggestion)
+    if (!recentLocalSuggestionHashes.has(schHash)) {
+      recentLocalSuggestionHashes.add(schHash)
+      setTimeout(() => recentLocalSuggestionHashes.delete(schHash), 2 * 60 * 1000)
+    }
   }
 
-  // 先尝试调用 parseTask 接口（若存在），若有解析结果则生成 task 建议并预填表单
+  // 使用本地解析作为快速建议（已移除对后端 parse-task 接口的调用以避免重复/错误弹窗）
   let parsedSuggestion: any = null
   try {
-    const parsed = await userAiApi.parseTask({ message: userMsg })
-    if (parsed && (parsed.title || parsed.startTime || parsed.deadline || parsed.estimatedMinutes)) {
-      parsedSuggestion = buildSuggestionFromParsed(parsed)
+    const local = localParseTask(userMsg)
+    if (local && (local.title || local.startTime || local.deadline || local.estimatedMinutes)) {
+      parsedSuggestion = buildSuggestionFromParsed(local)
     }
-  } catch (e) {
-    // 后端无解析能力或出错，使用本地解析作为回退
-    try {
-      const local = localParseTask(userMsg)
-      if (local && (local.title || local.startTime || local.deadline || local.estimatedMinutes)) {
-        parsedSuggestion = buildSuggestionFromParsed(local)
-      }
-    } catch (err) { /* ignore */ }
-  }
+  } catch (err) { /* ignore */ }
 
   // 如果有建议，则先将建议消息展示，并准备跳转/填表
   if (parsedSuggestion) {
-    // 显示建议；仅当用户明确表达创建意图时才自动打开创建表单
-    messages.value.push({ id: String(messageIdCounter++), role: 'assistant', type: 'task', taskData: parsedSuggestion })
-    await scrollToBottom()
-
-    try {
-      const payload = {
-        title: parsedSuggestion.title,
-        startTime: parsedSuggestion.startTime || parsedSuggestion.deadline || null,
-        deadline: parsedSuggestion.deadline || null,
-        estimatedMinutes: parsedSuggestion.estimatedMinutes,
-        estimatedTime: parsedSuggestion.estimatedTime,
-        description: parsedSuggestion.description,
-        categoryName: parsedSuggestion.categoryName,
-      }
-      if (isCreateTaskIntent(userMsg)) {
-        sessionStorage.setItem('ai_pending_create_task', JSON.stringify(payload))
-        await router.push('/dashboard/tasks')
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('ai-create-task', { detail: payload }))
-          sessionStorage.removeItem('ai_pending_create_task')
-        }, 220)
-      }
-    } catch (err) {
-      console.warn('导航或分发建议失败', err)
+    // 本地解析到任务建议，但不再以卡片形式展示以避免重复弹窗。
+    console.debug('[AI助手] 本地解析到任务建议（已禁用卡片显示）', parsedSuggestion)
+    // 记录去重哈希以避免后续重复建议
+    const taskHashLocal = hashTaskSuggestion(parsedSuggestion)
+    if (!recentLocalSuggestionHashes.has(taskHashLocal)) {
+      recentLocalSuggestionHashes.add(taskHashLocal)
+      setTimeout(() => recentLocalSuggestionHashes.delete(taskHashLocal), 2 * 60 * 1000)
     }
+    await scrollToBottom()
   }
 
   // 继续正常发送对话请求到后端（不依赖于 parse 结果）
   // 添加加载指示器
+  const requestId = String(Date.now()) + '-' + Math.random().toString(36).slice(2,8)
   const loadingMsgId = String(messageIdCounter++)
   messages.value.push({ id: loadingMsgId, role: 'assistant', type: 'loading' })
+  pendingRequests.set(requestId, loadingMsgId)
 
   loading.value = true
   await scrollToBottom()
@@ -541,7 +516,7 @@ const sendMessage = async () => {
     const provider = modelMapping[selectedModel.value] || selectedModel.value
     // 尝试获取 Todo 上下文（仅当用户允许且当前在 /dashboard/todos 页面）
     const currentPath = router.currentRoute.value?.path || ''
-    let answer: string | null = null
+    let answer: any = null
     try {
       // 若当前在待办页但本地 todoStore 尚未填充（可能尚未完成页面同步），尝试从后端拉取视图范围内的任务并导入，确保 AI 能拿到中/低优任务
       if ((currentPath.includes('/dashboard/todos') || currentPath.includes('/dashboard/tasks')) && toArray((todoStore as any).tasks).length === 0) {
@@ -595,100 +570,222 @@ const sendMessage = async () => {
           mediumSample: context && context.medium_priority_tasks ? (context.medium_priority_tasks as any).slice(0,8).map((t:any)=>t.title) : []
         })
       } catch (e) { console.warn('[AI助手] 上下文打印失败', e) }
-      if (context) {
-        // 使用 promote 接口，将用户问题、上下文和最近的消息历史发送给后端
-        const recent = (messages.value || []).slice(-12).map((m:any) => {
-          let content = ''
-          try {
-            if (m.type === 'text') content = m.content || ''
-            else if (m.type === 'task') content = JSON.stringify({ type: 'task_suggestion', taskData: m.taskData || {} })
-            else if (m.type === 'schedule') content = JSON.stringify({ type: 'schedule_suggestion', scheduleData: m.scheduleData || {} })
-            else content = JSON.stringify(m)
-          } catch (e) {
-            content = String(m.content || '')
-          }
-          return { role: m.role, content }
+
+      // 始终使用 promote（并传入最近历史）；promote 失败时回退到 chat
+      // 构建发送给后端的最近历史：仅包含 role 为 user/assistant 且 content 为纯字符串的消息
+      // 同时过滤掉明显的 JSON 字符串（例如包含 "type" 字段的结构化消息），避免把结构化建议作为对话历史发送给后端
+      const recent = (messages.value || [])
+        .slice(-12)
+        .filter((m:any) => {
+          if (m.role !== 'user' && m.role !== 'assistant') return false
+          if (typeof m.content !== 'string') return false
+          const s = (m.content || '').trim()
+          if (s.startsWith('{') && s.includes('"type"')) return false
+          return true
         })
-        answer = await userAiApi.promote({ question: userMsg, context, model: provider, messages: recent })
-      } else {
+        .map((m:any) => ({ role: m.role, content: m.content }))
+      try {
+        answer = await userAiApi.promote({ question: userMsg, context: context || null, model: provider, messages: recent })
+      } catch (promoteErr) {
+        console.warn('[AI助手] promote 接口调用失败，回退到 chat：', promoteErr)
         answer = await userAiApi.chat({ message: userMsg, model: provider })
       }
     } catch (ctxErr) {
       console.warn('[AI助手] 上下文增强调用失败，回退到普通 chat：', ctxErr)
       answer = await userAiApi.chat({ message: userMsg, model: provider })
     }
-    messages.value = messages.value.filter(m => m.id !== loadingMsgId)
+    // 去重：如果此 request 已被处理过则忽略后续响应
+    if (processedRequestIds.has(requestId)) {
+      const lid = pendingRequests.get(requestId)
+      if (lid) messages.value = messages.value.filter(m => m.id !== lid)
+      pendingRequests.delete(requestId)
+      return
+    }
+    processedRequestIds.add(requestId)
+    // 清理 loading 提示
+    const lid = pendingRequests.get(requestId)
+    if (lid) { messages.value = messages.value.filter(m => m.id !== lid); pendingRequests.delete(requestId) }
     console.log('[AI助手] 收到回复:', { userMsg, answer, type: typeof answer, model: provider })
+    messages.value = messages.value.filter(m => m.id !== loadingMsgId)
 
-    // 支持后端返回结构化 JSON：{ type, content, data }
+    // 支持后端返回结构化 JSON：{ type, content, data }，并兼容数组与 update_schedule
     try {
-      if (answer && typeof answer === 'object' && (answer as any).type) {
+      // helper: 从可能的字段集合中选取第一个存在的日期字段
+      const pickDateField = (obj: any, keys: string[]) => {
+        if (!obj) return null
+        for (const k of keys) {
+          if (Object.prototype.hasOwnProperty.call(obj, k) && obj[k]) return obj[k]
+        }
+        return null
+      }
+
+      const handleCreateTask = async (parsed: any, content: string) => {
+        const rawStart = pickDateField(parsed, ['startTime','start_time','start','startDate','start_date','deadline'])
+        const rawDeadline = pickDateField(parsed, ['deadline','dueDate','due_date'])
+        const estMin = parsed?.estimatedMinutes ?? (parsed?.estimatedTime ? Math.round(parsed.estimatedTime * 60) : null)
+        const suggestion = {
+          title: parsed.title || (content ? String(content).substring(0,120) : '新任务'),
+          startTime: rawStart ? new Date(rawStart) : (rawDeadline ? new Date(rawDeadline) : null),
+          deadline: rawDeadline ? new Date(rawDeadline) : null,
+          estimatedMinutes: estMin ?? 0,
+          description: parsed.description || parsed.note || parsed.notes || '',
+          categoryName: parsed.categoryName || parsed.category || null,
+        }
+
+        if (content && String(content).trim().length > 0) {
+          messages.value.push({ id: String(messageIdCounter++), role: 'assistant', type: 'text', content: String(content) })
+        }
+
+        try {
+          const thash = hashTaskSuggestion(suggestion)
+          if (!recentLocalSuggestionHashes.has(thash)) {
+            messages.value.push({ id: String(messageIdCounter++), role: 'assistant', type: 'task', taskData: suggestion })
+            recentLocalSuggestionHashes.add(thash)
+            setTimeout(() => recentLocalSuggestionHashes.delete(thash), 2 * 60 * 1000)
+          } else {
+            console.debug('[AI助手] 跳过重复的任务建议', thash)
+          }
+        } catch (e) { messages.value.push({ id: String(messageIdCounter++), role: 'assistant', type: 'task', taskData: suggestion }) }
+
+        const payload: any = {
+          title: suggestion.title,
+          startTime: suggestion.startTime ? new Date(suggestion.startTime).toISOString() : null,
+          deadline: suggestion.deadline ? new Date(suggestion.deadline).toISOString() : null,
+          estimatedMinutes: suggestion.estimatedMinutes,
+          description: suggestion.description,
+          categoryName: suggestion.categoryName,
+        }
+
+        if (isCreateTaskIntent(userMsg)) {
+          // 自动创建：优先使用 taskStore API，若失败再降级为打开创建表单
+          try {
+            const thash = hashTaskSuggestion(suggestion)
+            if (!recentLocalSuggestionHashes.has(thash)) {
+              await taskStore.createTask(payload)
+              messages.value.push({ id: String(messageIdCounter++), role: 'assistant', type: 'text', content: `已创建任务：${payload.title}` })
+              recentLocalSuggestionHashes.add(thash)
+              setTimeout(() => recentLocalSuggestionHashes.delete(thash), 2 * 60 * 1000)
+            } else {
+              console.debug('[AI助手] 跳过重复创建任务', payload.title)
+            }
+          } catch (err) {
+            console.warn('[AI助手] 批量创建任务失败，降级为打开表单', err)
+            try { sessionStorage.setItem('ai_pending_create_task', JSON.stringify(payload)) } catch (e) {}
+            try { await router.push('/dashboard/tasks') } catch (e) {}
+            setTimeout(() => { window.dispatchEvent(new CustomEvent('ai-create-task', { detail: payload })); try { sessionStorage.removeItem('ai_pending_create_task') } catch (e) {} }, 220)
+          }
+        }
+      }
+
+      const handleCreateSchedule = async (parsed: any, content: string) => {
+        const rawStart = pickDateField(parsed, ['startTime','start_time','start','startDate','start_date','begin'])
+        const rawEnd = pickDateField(parsed, ['endTime','end_time','end','endDate','end_date','finish'])
+        const suggestion = {
+          title: parsed.title || (content ? String(content).substring(0,120) : '日程'),
+          startTime: rawStart ? new Date(rawStart) : null,
+          endTime: rawEnd ? new Date(rawEnd) : null,
+          reminderTime: parsed.reminderTime ?? parsed.reminder ?? 15,
+          description: parsed.description || parsed.note || '',
+        }
+
+        if (content && String(content).trim().length > 0) {
+          messages.value.push({ id: String(messageIdCounter++), role: 'assistant', type: 'text', content: String(content) })
+        }
+
+        try {
+          const shash = hashScheduleSuggestion(suggestion)
+          if (!recentLocalSuggestionHashes.has(shash)) {
+            messages.value.push({ id: String(messageIdCounter++), role: 'assistant', type: 'schedule', scheduleData: suggestion })
+            recentLocalSuggestionHashes.add(shash)
+            setTimeout(() => recentLocalSuggestionHashes.delete(shash), 2 * 60 * 1000)
+          } else {
+            console.debug('[AI助手] 跳过重复的日程建议', shash)
+          }
+        } catch (e) { messages.value.push({ id: String(messageIdCounter++), role: 'assistant', type: 'schedule', scheduleData: suggestion }) }
+
+        const payload: any = {
+          title: suggestion.title,
+          startTime: suggestion.startTime ? new Date(suggestion.startTime).toISOString() : null,
+          endTime: suggestion.endTime ? new Date(suggestion.endTime).toISOString() : null,
+          reminderTime: suggestion.reminderTime,
+          description: suggestion.description,
+        }
+
+        if (isCreateScheduleIntent(userMsg)) {
+          try {
+            await scheduleStore.createSchedule(payload)
+            messages.value.push({ id: String(messageIdCounter++), role: 'assistant', type: 'text', content: `已创建日程：${payload.title}` })
+          } catch (err) {
+            console.warn('[AI助手] 批量创建日程失败，降级为打开表单', err)
+            try { sessionStorage.setItem('ai_pending_create_schedule', JSON.stringify(payload)) } catch (e) {}
+            try { await router.push('/dashboard/schedules') } catch (e) {}
+            setTimeout(() => { window.dispatchEvent(new CustomEvent('ai-create-schedule', { detail: payload })); try { sessionStorage.removeItem('ai_pending_create_schedule') } catch (e) {} }, 220)
+          }
+        }
+      }
+
+      if (Array.isArray(answer)) {
+        // 收集任务与日程项，任务使用队列逐一弹窗
+        const taskItems: any[] = []
+        const scheduleItems: any[] = []
+        for (const item of answer) {
+          if (!item || typeof item !== 'object' || !item.type) continue
+          const atype = String(item.type)
+          const content = item.content || ''
+          const data = item.data || {}
+          if (atype === 'create_task') {
+            taskItems.push({ data, content })
+          } else if (atype === 'create_schedule') {
+            scheduleItems.push({ data, content })
+          } else if (atype === 'update_schedule') {
+            messages.value.push({ id: String(messageIdCounter++), role: 'assistant', type: 'text', content: content || '检测到日程变动，已为您打开日程页面以便确认。' })
+            try { sessionStorage.setItem('ai_pending_update_schedule', JSON.stringify(data)) } catch (e) {}
+            try { await router.push('/dashboard/schedules') } catch (e) {}
+            setTimeout(() => { window.dispatchEvent(new CustomEvent('ai-update-schedule', { detail: data })); try { sessionStorage.removeItem('ai_pending_update_schedule') } catch (e) {} }, 220)
+          } else {
+            messages.value.push({ id: String(messageIdCounter++), role: 'assistant', type: 'text', content: content || String(item) })
+          }
+        }
+
+        // 多任务：写入队列并触发首个创建表单
+        if (taskItems.length > 0) {
+          const payloads = taskItems.map(it => {
+            const parsed = it.data || {}
+            const st = parsed.startTime || parsed.start_date || parsed.start
+            const dl = parsed.deadline || parsed.dueDate || parsed.end_date
+            return {
+              title: parsed.title || (it.content ? String(it.content).substring(0,120) : '新任务'),
+              startTime: st ? (dayjs(st).isValid() ? dayjs(st).toISOString() : null) : (dl ? (dayjs(dl).isValid() ? dayjs(dl).toISOString() : null) : null),
+              deadline: dl ? (dayjs(dl).isValid() ? dayjs(dl).toISOString() : null) : null,
+              estimatedMinutes: parsed.estimatedMinutes ?? (parsed.estimatedTime ? Math.round(parsed.estimatedTime * 60) : null),
+              description: parsed.description || parsed.note || parsed.notes || '',
+              categoryName: parsed.categoryName || null,
+            }
+          })
+          try { sessionStorage.setItem('ai_pending_create_tasks', JSON.stringify(payloads)) } catch (e) { console.warn('store queue failed', e) }
+          try { await router.push('/dashboard/tasks') } catch (e) {}
+          setTimeout(() => { try { window.dispatchEvent(new CustomEvent('ai-create-task', { detail: payloads[0] })) } catch (e) { console.warn('dispatch first queued task failed', e) } }, 220)
+          messages.value.push({ id: String(messageIdCounter++), role: 'assistant', type: 'text', content: `已为您识别 ${taskItems.length} 个任务，将依次打开创建表单。` })
+        }
+
+        // 逐个处理日程建议（仍沿用原有逻辑）
+        for (const it of scheduleItems) {
+          await handleCreateSchedule(it.data, it.content)
+        }
+      } else if (answer && typeof answer === 'object' && (answer as any).type) {
         const atype = String((answer as any).type)
         const content = (answer as any).content || ''
         const data = (answer as any).data || null
 
         if (atype === 'create_task') {
-          const parsed: any = data || {}
-          const suggestion = {
-            title: parsed.title || (typeof content === 'string' ? content.substring(0, 120) : '新任务'),
-            startTime: parsed.startTime ? new Date(parsed.startTime) : (parsed.deadline ? new Date(parsed.deadline) : null),
-            deadline: parsed.deadline ? new Date(parsed.deadline) : null,
-            estimatedMinutes: parsed.estimatedMinutes ?? (parsed.estimatedTime ? Math.round(parsed.estimatedTime * 60) : null),
-            description: parsed.description || parsed.note || '',
-            categoryName: parsed.categoryName || null,
-          }
-          messages.value.push({ id: String(messageIdCounter++), role: 'assistant', type: 'task', taskData: suggestion })
-
-          try {
-            const payload = {
-              title: suggestion.title,
-              startTime: suggestion.startTime ? new Date(suggestion.startTime).toISOString() : (suggestion.deadline ? new Date(suggestion.deadline).toISOString() : null),
-              deadline: suggestion.deadline ? new Date(suggestion.deadline).toISOString() : null,
-              estimatedMinutes: suggestion.estimatedMinutes,
-              description: suggestion.description,
-              categoryName: suggestion.categoryName,
-            }
-            // 二次校验：仅当用户明确表达创建意图时才自动打开任务创建窗口
-            if (isCreateTaskIntent(userMsg)) {
-              sessionStorage.setItem('ai_pending_create_task', JSON.stringify(payload))
-              await router.push('/dashboard/tasks')
-              setTimeout(() => {
-                window.dispatchEvent(new CustomEvent('ai-create-task', { detail: payload }))
-                sessionStorage.removeItem('ai_pending_create_task')
-              }, 220)
-            } else {
-              // 当模型误判为创建但用户并未明确要求时，降级为普通文本回复（并记录日志）
-              console.warn('[AI助手] 模型返回 create_task，但用户消息未包含创建关键词，已降级为普通回复。用户消息:', userMsg)
-            }
-          } catch (err) { console.warn('导航或分发建议失败', err) }
-
+          await handleCreateTask(data || {}, content)
         } else if (atype === 'create_schedule') {
-          const parsed: any = data || {}
-          const suggestion = {
-            title: parsed.title || (typeof content === 'string' ? content.substring(0, 120) : '日程'),
-            startTime: parsed.startTime ? new Date(parsed.startTime) : null,
-            endTime: parsed.endTime ? new Date(parsed.endTime) : null,
-            reminderTime: parsed.reminderTime ?? 15,
-            description: parsed.description || ''
-          }
-          messages.value.push({ id: String(messageIdCounter++), role: 'assistant', type: 'schedule', scheduleData: suggestion })
-          try {
-            const payload = {
-              title: suggestion.title,
-              startTime: suggestion.startTime ? new Date(suggestion.startTime).toISOString() : null,
-              endTime: suggestion.endTime ? new Date(suggestion.endTime).toISOString() : null,
-              reminderTime: suggestion.reminderTime,
-              description: suggestion.description,
-            }
-            if (isCreateScheduleIntent(userMsg)) {
-              sessionStorage.setItem('ai_pending_create_schedule', JSON.stringify(payload))
-              await router.push('/dashboard/schedules')
-              setTimeout(() => { window.dispatchEvent(new CustomEvent('ai-create-schedule', { detail: payload })); sessionStorage.removeItem('ai_pending_create_schedule') }, 220)
-            } else {
-              console.warn('[AI助手] 模型返回 create_schedule，但用户消息未包含创建关键词，已降级为普通回复。用户消息:', userMsg)
-            }
-          } catch (err) { console.warn('导航或分发日程失败', err) }
-
+          await handleCreateSchedule(data || {}, content)
+        } else if (atype === 'update_schedule') {
+          messages.value.push({ id: String(messageIdCounter++), role: 'assistant', type: 'text', content: content || '检测到日程变动，已为您打开日程页面以便确认。' })
+          try { sessionStorage.setItem('ai_pending_update_schedule', JSON.stringify(data || {})) } catch (e) {}
+          try { await router.push('/dashboard/schedules') } catch (e) {}
+          setTimeout(() => { window.dispatchEvent(new CustomEvent('ai-update-schedule', { detail: data || {} })); try { sessionStorage.removeItem('ai_pending_update_schedule') } catch (e) {} }, 220)
         } else {
           const text = (content && String(content).trim()) || '🤖 暂无回复内容，请稍后重试或换种说法。'
           messages.value.push({ id: String(messageIdCounter++), role: 'assistant', type: 'text', content: text })
@@ -728,6 +825,45 @@ const renderMarkdown = (text: string | undefined | null) => {
 const escapeHtml = (text: string | undefined | null) => {
   if (text == null) return ''
   return String(text).replace(/[&<>]/g, (m) => (m === '&' ? '&amp;' : m === '<' ? '&lt;' : '&gt;'))
+}
+
+const scrollToBottom = async () => {
+  await nextTick()
+  try {
+    if (messagesContainer.value) {
+      messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+    }
+  } catch (e) { /* ignore */ }
+}
+
+onMounted(async () => {
+  await loadChatHistory()
+  await scrollToBottom()
+})
+
+// 将消息持久化到 localStorage（按 sessionId 分隔）
+watch(messages, (nv) => {
+  try {
+    const key = 'ai_chat_history_' + sessionId.value
+    localStorage.setItem(key, JSON.stringify(nv))
+  } catch (e) { /* ignore */ }
+}, { deep: true })
+
+// 清空聊天记录：清空内存消息、重置计数，并移除本地/会话存储中相关条目
+const clearChatHistory = () => {
+  try {
+    messages.value = []
+    messageIdCounter = 0
+    const key = 'ai_chat_history_' + sessionId.value
+    try { localStorage.removeItem(key) } catch (e) { /* ignore */ }
+    try { sessionStorage.removeItem('ai_pending_create_task') } catch (e) { /* ignore */ }
+    try { sessionStorage.removeItem('ai_pending_create_schedule') } catch (e) { /* ignore */ }
+    try { sessionStorage.removeItem('ai_pending_create_tasks') } catch (e) { /* ignore */ }
+    ElMessage.success('已清空聊天记录')
+  } catch (e) {
+    console.warn('[AI助手] 清空聊天记录失败', e)
+    ElMessage.error('清空聊天记录失败')
+  }
 }
 
 const quickAction = (action: string) => {
