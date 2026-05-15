@@ -44,12 +44,8 @@ public class UserAiController {
      * 自然语言解析任务
      * POST /api/v1/user/ai/parse-task
      */
-    @PostMapping("/parse-task")
-    public Result<UserAiService.TaskParseResult> parseTask(@RequestBody ParseTaskRequest request) {
-        UserAiService.TaskParseResult result = 
-            userAiService.parseTaskFromNaturalLanguage(request.getMessage());
-        return Result.success(result);
-    }
+    // NOTE: parse-task endpoint removed to avoid frontend sending/receiving structured parse results
+    // (历史原因：前端将结构化建议作为会话历史发送给模型，导致模型生成重复/错误的建议)。
     
     /**
      * 生成今日任务总结
@@ -84,7 +80,7 @@ public class UserAiController {
             return Result.error(403, "仅普通用户可用该接口");
         }
         Long userId = UserUtil.getCurrentUserId();
-        Map<String, Object> resp = userAiService.promote(userId, request.getMessages(), request.getQuestion(), request.getContext(), request.getModel());
+        Object resp = userAiService.promote(userId, request.getMessages(), request.getQuestion(), request.getContext(), request.getModel());
         return Result.success(resp);
     }
     
@@ -95,10 +91,7 @@ public class UserAiController {
         private String model;  // 可选：指定 AI 模型 (e.g., "chatgpt3.5", "deepseek")
     }
     
-    @Data
-    public static class ParseTaskRequest {
-        private String message;
-    }
+    // ParseTaskRequest removed — parsing now handled internally where needed, avoid exposing parse-task API
     
     @Data
     public static class TaskSuggestionRequest {

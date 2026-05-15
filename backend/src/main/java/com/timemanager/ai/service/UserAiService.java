@@ -2,6 +2,8 @@ package com.timemanager.ai.service;
 
 import com.timemanager.mapper.TaskMapper;
 import com.timemanager.entity.Task;
+import com.timemanager.entity.Schedule;
+import com.timemanager.service.ScheduleService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -11,6 +13,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.Duration;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
@@ -32,8 +36,14 @@ public class UserAiService {
     
     @Autowired
     private TaskMapper taskMapper;
+
+    @Autowired
+    private ScheduleService scheduleService;
     
     private final ObjectMapper objectMapper = new ObjectMapper();
+    // Toggle: if true, `promote` delegates intent/time parsing entirely to LLM.
+    // Change to true to enable model-only mode; set to false to use rule-based logic (default).
+    private static final boolean PROMOTE_MODEL_ONLY = true;
     
     /**
      * 基础对话 - 用户端 AI 智能助手
@@ -47,34 +57,32 @@ public class UserAiService {
         String intent = detectUserIntent(message);
         
         String systemPrompt = """
-            你是一个超级聪慧的个人时间管理助手，专门帮助用户高效管理任务和时间。
-            
+            你是一个温暖、亲切的个人时间管理助手，像贴心朋友一样与用户交流。
+
             【你的职责】：
             1. 📝 帮助创建任务：当用户说"我要...", "帮我...", "创建"时，主动询问任务详情
             2. 📊 查询任务：当用户问"我的任务", "完成了多少", "今天的任务"时，描述可能的查询方式
             3. 💡 效率建议：基于任务数量、完成率给出时间管理建议
             4. 🎯 激励鼓励：当用户表达困难或疲劳时，给予积极鼓励
             5. ⏰ 时间规划：帮助用户制定合理的任务计划
-            
+
             【交互风格】：
-            - ✅ 回答简洁清晰，一般不超过100字
-            - ✅ 语气友善热情，表现出真正的关心
-            - ✅ 如果用户提到具体任务，主动给出建议
-            - ✅ 避免重复相同的欢迎语，每次都个性化回复
-            - ✅ 使用表情符号增加交互感
-            - ✅ 如果理解不了，主动询问"你是想..."
-            
+            - ✅ 语气友好、温暖，像朋友一样，适当使用表情符号（例如 😊、💪、📝、⏰、🌟）
+            - ✅ 回答简洁清晰，力求可执行
+            - ✅ 在确认任务创建时，content 要包含肯定且鼓励的话语（例如："💪 好的，已记下！"）
+            - ✅ 如果信息不足以创建任务，要用友好语气询问澄清问题
+
             【检测意图】：""" + intent + """
-            
+
             用户ID: """ + userId + """
             当前时间: """ + LocalDateTime.now() + """
-            
+
             【示例回复】：
             用户："我今天很累"
-            你的回复："☕ 累的时候要好好休息！不过我发现你很坚持呢。要不要把今天的任务列出来，看看什么可以先完成，什么可以后延？这样压力会小一些。"
-            
+            你的回复："☕ 累的时候要好好休息！我在这儿支持你。要不要我帮你把今天的任务整理一下？"
+
             用户："帮我创建一个任务"
-            你的回复："📝 好的！告诉我任务是什么呢？比如：任务的名称、大概要花多长时间、什么时候想完成它？"
+            你的回复："📝 好的！告诉我任务是什么呢？比如：任务的名称、预计时长、什么时候想做？"
             """;
         
         log.info("[用户AI] 检测到意图: {}, 用户消息: {}, 指定模型: {}", intent, message, model);
@@ -100,35 +108,33 @@ public class UserAiService {
      * @param model 可选的模型提供商
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
-    public Map<String, Object> promote(Long userId, List<Map<String, Object>> messages, String question, Map<String, Object> context, String model) {
-        String intent = detectUserIntent(question);
+    public Object promote(Long userId, List<Map<String, Object>> messages, String question, Map<String, Object> context, String model) {
+                // 不再使用本地意图检测，promote 完全依赖大模型判断。
+                // 系统提示词中明确要求：仅当用户明确使用“创建/添加/安排”等动词时才返回 create_task/create_schedule
+                                String systemPrompt = """
+                                                你是一个温暖、亲切的个人时间管理助手，像贴心朋友一样与用户交流。请在 content 中使用友好语气并适当加入表情符号（例如 😊、💪、📝、⏰）。
 
-        String systemPrompt = """
-            你是一个超级聪慧的个人时间管理助手，专门帮助用户高效管理任务和时间。
+                                                输出格式要求（严格）：
+                                                - 必须返回有效的 JSON（不要包含其它多余的文字），JSON 结构如下：
+                                                {
+                                                        "type": "answer" | "create_task" | "create_schedule",
+                                                        "content": "对用户的可读回复（友好且含 emoji）",
+                                                        "data": { ... 可选的结构化字段 ... }
+                                                }
 
-            输出格式要求：
-            - 必须返回有效的 JSON（不要包含其它多余的文字），JSON 结构如下：
-            {
-              "type": "answer" | "create_task" | "create_schedule",
-              "content": "对用户的可读回复（简洁）",
-              "data": { ... 可选的结构化字段 ... }
-            }
+                                                重要判定规则（请严格遵守）：
+                                                - 仅当用户**明确**使用类似“创建”、“添加”、“安排”等明确动词时，才返回 create_task 或 create_schedule；否则返回 answer。
+                                                - 当返回 create_task 时，data 应尽可能包含下列字段（若无法推断，请置为 null 并在 content 中友好询问）：
+                                                    - title: 任务标题
+                                                    - startTime: ISO 8601 字符串（例如 2026-05-14T08:00:00），若用户只给出相对时间（如“今天上午8点”），请基于当前日期转换为绝对时间。
+                                                    - deadline: （可选）ISO 8601 字符串
+                                                    - estimatedMinutes: 预估时长（整数，分钟）
+                                                - 当返回 create_schedule 时，data 应包含 startTime 与 endTime（ISO 8601）。
+                                                - 如果检测到与用户现有日程时间冲突，返回 update_schedule，data 中包含 original（已有日程）和 proposed（建议更改）。
+                                                - 如果无法确定或信息不足，请返回 type = "answer" 并在 content 中用友好语气询问澄清问题。
 
-            当 "type" 为 "create_task" 时，"data" 应包含以下字段（若未知可置为 null）：
-            - title: 任务标题
-            - deadline: ISO 格式时间字符串或 null
-            - startTime: ISO 格式时间字符串或 null
-            - estimatedMinutes: 预估分钟数或 null
-            - categoryName: 分类名或 null
-            - description: 任务描述或空字符串
-
-            当 "type" 为 "create_schedule" 时，"data" 应包含：
-            - title, startTime, endTime, reminderTime(分钟), description
-
-            如果无法满足创建操作，请返回 type 为 "answer" 并在 content 中给出建议。
-
-            【交互风格】：保持友善并直接给出可执行的下一步。
-            """ + "\n检测意图:" + intent + "\n用户ID:" + userId + "\n当前时间:" + LocalDateTime.now();
+                                                注意：content 必须以轻松、鼓励的语气回答，并可包含 emoji，例如“💪 已为你安排好啦～”。
+                                                """ + "\n用户ID:" + userId + "\n当前时间:" + LocalDateTime.now();
 
         StringBuilder userMsgBuilder = new StringBuilder();
 
@@ -242,17 +248,233 @@ public class UserAiService {
         // 最终用户消息文本
         String userMessage = userMsgBuilder.toString();
 
+        // 如果启用模型优先模式，则将所有判断交给大模型（移除本地规则），直接返回模型输出（首个 JSON）
+        if (PROMOTE_MODEL_ONLY) {
+                                String systemPromptModelOnly = """
+                                        你是一个温暖、亲切的时间管理助手，像朋友一样与用户对话。请使用自然友好的语气，并适度加入表情符号（例如 😊、💪、📝、⏰）。
+
+                                        输出格式要求（严格）：
+                                        - 必须只返回有效的 JSON，不要输出任何额外文字。可以返回单个 JSON 对象或 JSON 数组。每个元素结构如下：
+                                        {
+                                            "type": "answer" | "create_task" | "create_schedule" | "update_schedule",
+                                            "content": "对用户的可读回复（友好且含 emoji）",
+                                            "data": { ... }
+                                        }
+
+                                        对于 create_task，data 必须尽可能包含：
+                                        - "title": 任务标题（字符串）
+                                        - "startTime": ISO 8601（例如 2026-05-14T08:00:00），若用户给出相对时间（如“今天上午8点”），请基于当前日期转换为绝对时间。
+                                        - "deadline": 可选 ISO 8601
+                                        - "estimatedMinutes": 整数（分钟）
+                                        如果无法推断某字段，请将其设为 null，并在 content 中用友好语气询问用户以补全信息。
+
+                                        对于 create_schedule，data 必须包含 "startTime" 与 "endTime"（ISO 8601）。
+                                        当检测到与用户现有日程冲突时，返回 update_schedule，data 中包含 original（已有日程）和 proposed（建议更改）。
+                                        如果用户请求一次创建多个任务，返回 JSON 数组，每项为 create_task。
+                                        """ + "\n当前日期: " + LocalDate.now() + " 当前时间: " + LocalDateTime.now();
+
+            String aiRespModelOnly = dynamicAiService.chat(systemPromptModelOnly, userMessage, model);
+            try {
+                String jsonStr = extractJson(aiRespModelOnly);
+                if (jsonStr == null) {
+                    java.util.Map<String, Object> fallback = new java.util.HashMap<>();
+                    fallback.put("type", "answer");
+                    fallback.put("content", aiRespModelOnly);
+                    fallback.put("data", null);
+                    return fallback;
+                }
+
+                // 支持数组或对象
+                String trimmed = jsonStr.trim();
+                if (trimmed.startsWith("[")) {
+                    List parsedList = objectMapper.readValue(jsonStr, List.class);
+                    // 对于其中的 create_schedule 项，做一次冲突检测并替换为 update_schedule（如有冲突）
+                    List<Object> out = new java.util.ArrayList<>();
+                    for (Object it : parsedList) {
+                        if (!(it instanceof Map)) { out.add(it); continue; }
+                        Map item = (Map) it;
+                        String typeStr = item.get("type") == null ? null : String.valueOf(item.get("type"));
+                        if ("create_schedule".equals(typeStr)) {
+                            Map dataMap = (Map) item.get("data");
+                            if (dataMap != null) {
+                                Object s0 = dataMap.get("startTime");
+                                Object e0 = dataMap.get("endTime");
+                                LocalDateTime pst = tryParseDateTime(String.valueOf(s0));
+                                LocalDateTime pet = tryParseDateTime(String.valueOf(e0));
+                                if (pst != null && pet != null) {
+                                    // 查询附近日程
+                                    String startDate = pst.toLocalDate().toString();
+                                    String endDate = pet.toLocalDate().toString();
+                                    try {
+                                        List<Schedule> existing = scheduleService.list(userId, startDate, endDate);
+                                        boolean conflict = false;
+                                        Schedule conflictSch = null;
+                                        for (Schedule sch : existing) {
+                                            if (sch == null || sch.getStartTime() == null || sch.getEndTime() == null) continue;
+                                            if (!(sch.getEndTime().isBefore(pst) || sch.getStartTime().isAfter(pet))) {
+                                                conflict = true; conflictSch = sch; break;
+                                            }
+                                        }
+                                        if (conflict && conflictSch != null) {
+                                            Map<String,Object> update = new java.util.HashMap<>();
+                                            update.put("type", "update_schedule");
+                                            update.put("content", "检测到与已有日程冲突，请确认修改或保留两者");
+                                            Map<String,Object> d = new java.util.HashMap<>();
+                                            d.put("original", scheduleToMap(conflictSch));
+                                            d.put("proposed", dataMap);
+                                            update.put("data", d);
+                                            out.add(update);
+                                            continue;
+                                        }
+                                    } catch (Exception e) {
+                                        log.warn("[用户AI] 冲突检测失败：{}", e.getMessage());
+                                    }
+                                }
+                            }
+                        }
+                        out.add(item);
+                    }
+                    return out;
+                } else {
+                    Map parsed = objectMapper.readValue(jsonStr, Map.class);
+                    // 对单个 create_schedule 做冲突检测
+                    try {
+                        Object typeObj = parsed.get("type");
+                        String typeStr = typeObj == null ? null : String.valueOf(typeObj);
+                        if ("create_schedule".equals(typeStr)) {
+                            Map dataMap = (Map) parsed.get("data");
+                            if (dataMap != null) {
+                                Object s0 = dataMap.get("startTime");
+                                Object e0 = dataMap.get("endTime");
+                                LocalDateTime pst = tryParseDateTime(String.valueOf(s0));
+                                LocalDateTime pet = tryParseDateTime(String.valueOf(e0));
+                                if (pst != null && pet != null) {
+                                    List<Schedule> existing = scheduleService.list(userId, pst.toLocalDate().toString(), pet.toLocalDate().toString());
+                                    for (Schedule sch : existing) {
+                                        if (sch == null || sch.getStartTime() == null || sch.getEndTime() == null) continue;
+                                        if (!(sch.getEndTime().isBefore(pst) || sch.getStartTime().isAfter(pet))) {
+                                            Map<String,Object> update = new java.util.HashMap<>();
+                                            update.put("type", "update_schedule");
+                                            update.put("content", "检测到与已有日程冲突，请确认修改或保留两者");
+                                            Map<String,Object> d = new java.util.HashMap<>();
+                                            d.put("original", scheduleToMap(sch));
+                                            d.put("proposed", dataMap);
+                                            update.put("data", d);
+                                            return update;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Exception ignore) {}
+                    return parsed;
+                }
+            } catch (Exception e) {
+                log.warn("[用户AI] 模型优先模式：无法解析为 JSON，回退为原始文本。错误: {}", e.getMessage());
+                java.util.Map<String, Object> fallback = new java.util.HashMap<>();
+                fallback.put("type", "answer");
+                fallback.put("content", aiRespModelOnly);
+                fallback.put("data", null);
+                return fallback;
+            }
+        }
+        // 本版本已移除本地意图/时间强制判定，promote 仅依赖模型的解析与返回（本地解析若需保留仅作为辅助不覆盖模型结果）
+
         // 调用 DynamicAiService（支持指定 provider/model）
         String aiResp = dynamicAiService.chat(systemPrompt, userMessage, model);
 
-        // 尝试解析为 JSON
+        // 尝试解析为 JSON（取第一个完整 JSON）
         try {
             String jsonStr = extractJson(aiResp);
-            Map parsed = objectMapper.readValue(jsonStr, Map.class);
-            return parsed;
+            if (jsonStr == null) {
+                // 如果没有找到有效 JSON，回退为原始文本
+                java.util.Map<String, Object> fallback = new java.util.HashMap<>();
+                fallback.put("type", "answer");
+                fallback.put("content", aiResp);
+                fallback.put("data", null);
+                return fallback;
+            }
+
+            String trimmed = jsonStr.trim();
+            if (trimmed.startsWith("[")) {
+                List parsedList = objectMapper.readValue(jsonStr, List.class);
+                List<Object> out = new java.util.ArrayList<>();
+                for (Object it : parsedList) {
+                    if (!(it instanceof Map)) { out.add(it); continue; }
+                    Map item = (Map) it;
+                    String typeStr = item.get("type") == null ? null : String.valueOf(item.get("type"));
+                    if ("create_schedule".equals(typeStr)) {
+                        Map dataMap = (Map) item.get("data");
+                        if (dataMap != null) {
+                            Object s0 = dataMap.get("startTime");
+                            Object e0 = dataMap.get("endTime");
+                            LocalDateTime pst = tryParseDateTime(String.valueOf(s0));
+                            LocalDateTime pet = tryParseDateTime(String.valueOf(e0));
+                            if (pst != null && pet != null) {
+                                try {
+                                    List<Schedule> existing = scheduleService.list(userId, pst.toLocalDate().toString(), pet.toLocalDate().toString());
+                                    boolean conflict = false;
+                                    Schedule conflictSch = null;
+                                    for (Schedule sch : existing) {
+                                        if (sch == null || sch.getStartTime() == null || sch.getEndTime() == null) continue;
+                                        if (!(sch.getEndTime().isBefore(pst) || sch.getStartTime().isAfter(pet))) {
+                                            conflict = true; conflictSch = sch; break;
+                                        }
+                                    }
+                                    if (conflict && conflictSch != null) {
+                                        Map<String,Object> update = new java.util.HashMap<>();
+                                        update.put("type", "update_schedule");
+                                        update.put("content", "检测到与已有日程冲突，请确认修改或保留两者");
+                                        Map<String,Object> d = new java.util.HashMap<>();
+                                        d.put("original", scheduleToMap(conflictSch));
+                                        d.put("proposed", dataMap);
+                                        update.put("data", d);
+                                        out.add(update);
+                                        continue;
+                                    }
+                                } catch (Exception ex) { log.warn("[用户AI] 冲突检查失败", ex.getMessage()); }
+                            }
+                        }
+                    }
+                    out.add(item);
+                }
+                return out;
+            } else {
+                Map parsed = objectMapper.readValue(jsonStr, Map.class);
+                try {
+                    Object typeObj = parsed.get("type");
+                    String typeStr = typeObj == null ? null : String.valueOf(typeObj);
+                    if ("create_schedule".equals(typeStr)) {
+                        Map dataMap = (Map) parsed.get("data");
+                        if (dataMap != null) {
+                            Object s0 = dataMap.get("startTime");
+                            Object e0 = dataMap.get("endTime");
+                            LocalDateTime pst = tryParseDateTime(String.valueOf(s0));
+                            LocalDateTime pet = tryParseDateTime(String.valueOf(e0));
+                            if (pst != null && pet != null) {
+                                List<Schedule> existing = scheduleService.list(userId, pst.toLocalDate().toString(), pet.toLocalDate().toString());
+                                for (Schedule sch : existing) {
+                                    if (sch == null || sch.getStartTime() == null || sch.getEndTime() == null) continue;
+                                    if (!(sch.getEndTime().isBefore(pst) || sch.getStartTime().isAfter(pet))) {
+                                        Map<String,Object> update = new java.util.HashMap<>();
+                                        update.put("type", "update_schedule");
+                                        update.put("content", "检测到与已有日程冲突，请确认修改或保留两者");
+                                        Map<String,Object> d = new java.util.HashMap<>();
+                                        d.put("original", scheduleToMap(sch));
+                                        d.put("proposed", dataMap);
+                                        update.put("data", d);
+                                        return update;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception ignore) {}
+                return parsed;
+            }
         } catch (Exception e) {
             log.warn("[用户AI] 无法解析为 JSON，返回原始文本。错误: {}", e.getMessage());
-            Map<String, Object> fallback = new java.util.HashMap<>();
+            java.util.Map<String, Object> fallback = new java.util.HashMap<>();
             fallback.put("type", "answer");
             fallback.put("content", aiResp);
             fallback.put("data", null);
@@ -272,9 +494,10 @@ public class UserAiService {
      * 检测用户意图（本地快速判断）
      */
     private String detectUserIntent(String message) {
-        if (message.contains("累") || message.contains("困") || message.contains("累") || message.contains("难")) {
+        if (message == null) return "GENERAL_CHAT - 一般对话";
+        if (message.contains("累") || message.contains("困") || message.contains("难")) {
             return "USER_FEELING_TIRED - 用户表达困难/疲劳";
-        } else if (message.contains("创建") || message.contains("新建") || message.contains("帮我") || message.contains("要") || message.contains("想")) {
+        } else if (message.contains("创建") || message.contains("新建") || message.contains("帮我") || message.contains("安排")) {
             return "CREATE_TASK - 用户想创建新任务";
         } else if (message.contains("完成") || message.contains("多少") || message.contains("几个") || message.contains("查询") || message.contains("统计")) {
             return "QUERY_TASKS - 用户想查询任务信息";
@@ -294,22 +517,22 @@ public class UserAiService {
     public TaskParseResult parseTaskFromNaturalLanguage(String input) {
         String systemPrompt = """
             你是一个任务解析专家。从用户的自然语言输入中提取任务信息。
-            
+
             必须返回纯 JSON 格式（不要有其他文字）：
             {
                 "title": "任务标题",
-                "deadline": "YYYY-MM-DD HH:mm",
-                "estimatedMinutes": 预估时长（分钟），
-                "categoryName": "工作/学习/个人/其他"
+                "startTime": "YYYY-MM-DDTHH:mm:ss" 或 null,
+                "deadline": "YYYY-MM-DDTHH:mm:ss" 或 null,
+                "estimatedMinutes": 预估时长（分钟）或 null,
+                "categoryName": "工作/学习/个人/其他" 或 null
             }
-            
+
             规则：
-            - 如果用户没有提供某些信息，则该字段置为 null
-            - 标题必须清晰简洁（不超过50字）
-            - 时间推断：如果用户说"明天"，推算为明天当前时间
-            - 如果没有指定时间，deadline 为 null
-            - 如果没有指定分类，categoryName 为 null
-            
+            - 时间请使用 ISO 8601（例如 2026-05-14T08:00:00）。
+            - 如果用户只给出相对时间（如“今天上午8点”），请基于当前日期转换为绝对时间。
+            - 如果没有指定某些信息，则该字段置为 null。
+            - 标题必须清晰简洁（不超过50字）。
+
             只返回 JSON，不要有其他解释。
             """;
         
@@ -392,12 +615,73 @@ public class UserAiService {
      * 从 AI 响应中提取 JSON 字符串
      */
     private String extractJson(String text) {
-        int start = text.indexOf('{');
-        int end = text.lastIndexOf('}');
-        if (start >= 0 && end > start) {
-            return text.substring(start, end + 1);
+        if (text == null) return null;
+        String s = text.trim();
+        // 优先寻找数组
+        int arrStart = s.indexOf('[');
+        int objStart = s.indexOf('{');
+        if (arrStart != -1 && (objStart == -1 || arrStart < objStart)) {
+            int depth = 0;
+            for (int i = arrStart; i < s.length(); i++) {
+                char c = s.charAt(i);
+                if (c == '[') depth++;
+                else if (c == ']') {
+                    depth--;
+                    if (depth == 0) return s.substring(arrStart, i + 1);
+                }
+            }
         }
-        return text;
+        // 否则寻找对象
+        if (objStart != -1) {
+            int braceCount = 0;
+            for (int i = objStart; i < s.length(); i++) {
+                char c = s.charAt(i);
+                if (c == '{') braceCount++;
+                else if (c == '}') {
+                    braceCount--;
+                    if (braceCount == 0) return s.substring(objStart, i + 1);
+                }
+            }
+        }
+        return null;
+    }
+
+    // 尝试解析多种常见格式为 LocalDateTime，返回 null 表示无法解析
+    private LocalDateTime tryParseDateTime(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        if (t.isEmpty() || "null".equalsIgnoreCase(t)) return null;
+        try {
+            // ISO 格式优先
+            return LocalDateTime.parse(t, DateTimeFormatter.ISO_DATE_TIME);
+        } catch (Exception ignored) {}
+        try {
+            // 常见的空格分隔格式：yyyy-MM-dd HH:mm:ss 或 yyyy-MM-dd HH:mm
+            DateTimeFormatter f1 = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            return LocalDateTime.parse(t, f1);
+        } catch (Exception ignored) {}
+        try {
+            DateTimeFormatter f2 = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+            return LocalDateTime.parse(t, f2);
+        } catch (Exception ignored) {}
+        try {
+            // 仅日期
+            DateTimeFormatter f3 = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+            return LocalDate.parse(t, f3).atStartOfDay();
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    private Map<String,Object> scheduleToMap(Schedule sch) {
+        Map<String,Object> m = new java.util.HashMap<>();
+        if (sch == null) return m;
+        m.put("id", sch.getId());
+        m.put("title", sch.getTitle());
+        try { m.put("startTime", sch.getStartTime() == null ? null : sch.getStartTime().toString()); } catch (Exception ignored) { m.put("startTime", null); }
+        try { m.put("endTime", sch.getEndTime() == null ? null : sch.getEndTime().toString()); } catch (Exception ignored) { m.put("endTime", null); }
+        m.put("taskId", sch.getTaskId());
+        m.put("remindBefore", sch.getRemindBefore());
+        return m;
     }
     
     /**
