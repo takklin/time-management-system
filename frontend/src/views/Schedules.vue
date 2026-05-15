@@ -396,6 +396,73 @@ const aiHandler = (e: any) => {
   }
 }
 
+// AI 助手：出差/日程变动更新事件处理器
+const aiUpdateHandler = (e: any) => {
+  try {
+    const payload = e.detail || {}
+    const data = payload.data || payload || {}
+    // 支持两种结构：{ original: {...}, updated: {...} } 或 直接 updated-like payload
+    const original = data.original || data.originalSchedule || data.orig || null
+    const updated = data.updated || data.updatedSchedule || data.new || data || null
+
+    // 如果没有实际更新内容，退回到通用处理
+    const target = updated || payload || {}
+
+    // 尝试匹配已存在的日程：优先按 id，再按标题+日期匹配
+    let found: any = null
+    try {
+      if (original && (original.id || original._id)) {
+        const idStr = String(original.id || original._id)
+        found = scheduleStore.schedules.find((s: any) => String(s.id) === idStr)
+      }
+    } catch (e) { /* ignore */ }
+
+    if (!found && original && original.title) {
+      // approximate match by title + same day
+      const cand = scheduleStore.schedules.filter((s: any) => s && s.title && String(s.title).indexOf(String(original.title)) !== -1)
+      if (cand.length === 1) found = cand[0]
+      else if (cand.length > 1 && original.startTime) {
+        found = cand.find((s: any) => dayjs(s.startTime).isSame(dayjs(original.startTime), 'day')) || cand[0]
+      }
+    }
+
+    // 将 updated 字段填入表单，若找到原日程则打开为编辑模式
+    editingScheduleId.value = found && found.id != null ? found.id : null
+    formData.title = (target && (target.title || target.name)) || (found && found.title) || ''
+    // 兼容多种字段名
+    const pickDate = (obj: any, keys: string[]) => {
+      if (!obj) return null
+      for (const k of keys) {
+        if (Object.prototype.hasOwnProperty.call(obj, k) && obj[k]) return obj[k]
+      }
+      return null
+    }
+    const rawStart = pickDate(target, ['startTime','start_time','start','startDate','start_date','begin'])
+    const rawEnd = pickDate(target, ['endTime','end_time','end','endDate','end_date','finish'])
+    // 如果只有日期（YYYY-MM-DD），则填充为全天（00:00 - 23:59:59）
+    const normalizeToRange = (v: any, isEnd=false) => {
+      if (!v) return null
+      try {
+        const s = dayjs(v)
+        if (s.format('HH:mm:ss') === '00:00:00' && /\d{4}-\d{2}-\d{2}/.test(String(v))) {
+          return isEnd ? s.hour(23).minute(59).second(59).toDate() : s.hour(0).minute(0).second(0).toDate()
+        }
+        return s.toDate()
+      } catch (e) { return null }
+    }
+
+    formData.startTime = rawStart ? normalizeToRange(rawStart, false) : (found && found.startTime ? new Date(found.startTime) : null)
+    formData.endTime = rawEnd ? normalizeToRange(rawEnd, true) : (found && found.endTime ? new Date(found.endTime) : null)
+    formData.reminderTime = (target && (target.reminderTime ?? target.reminder)) ?? (found && found.reminderTime) ?? 15
+    formData.description = (target && (target.description || target.note)) ?? (found && found.description) ?? ''
+
+    showDialog.value = true
+    ElMessage.info('检测到日程变动，已打开编辑弹窗， 请确认并保存以完成更新')
+  } catch (err) {
+    console.warn('ai-update-schedule handler error', err)
+  }
+}
+
 onMounted(async () => {
   try {
     await scheduleStore.fetchSchedules()
@@ -411,6 +478,7 @@ onMounted(async () => {
 
   // 在挂载后注册事件监听；onBeforeUnmount 在同步上下文中注册以避免 Vue 警告
   window.addEventListener('ai-create-schedule', aiHandler as EventListener)
+  window.addEventListener('ai-update-schedule', aiUpdateHandler as EventListener)
   // 如果有 pending 的 sessionStorage（热启动场景），先处理一次
   try {
     const pending = sessionStorage.getItem('ai_pending_create_schedule')
@@ -418,6 +486,12 @@ onMounted(async () => {
       const d = JSON.parse(pending)
       window.dispatchEvent(new CustomEvent('ai-create-schedule', { detail: d }))
       sessionStorage.removeItem('ai_pending_create_schedule')
+    }
+    const pendingUpdate = sessionStorage.getItem('ai_pending_update_schedule')
+    if (pendingUpdate) {
+      const d2 = JSON.parse(pendingUpdate)
+      window.dispatchEvent(new CustomEvent('ai-update-schedule', { detail: d2 }))
+      sessionStorage.removeItem('ai_pending_update_schedule')
     }
   } catch (err) { /* ignore */ }
 })
@@ -448,7 +522,10 @@ watch(() => userStore.user?.id, async (newId, oldId) => {
 })
 
 // 在 setup 同步阶段注册卸载钩子，确保与 aiHandler 配对移除监听器
-onBeforeUnmount(() => { window.removeEventListener('ai-create-schedule', aiHandler as EventListener) })
+onBeforeUnmount(() => {
+  try { window.removeEventListener('ai-create-schedule', aiHandler as EventListener) } catch (e) {}
+  try { window.removeEventListener('ai-update-schedule', aiUpdateHandler as EventListener) } catch (e) {}
+})
 
 const formatTime = (time: string) => {
   return dayjs(time).format('HH:mm')
@@ -549,6 +626,18 @@ const saveSchedule = async () => {
       ElMessage.success('日程创建成功')
     }
     showDialog.value = false
+    // 立即刷新日程列表以同步后端真实数据，避免页面显示旧缓存或局部状态
+    try {
+      await scheduleStore.fetchSchedules()
+    } catch (e) { console.warn('[Schedules] fetchSchedules after save failed', e) }
+    // 重置表单状态
+    editingScheduleId.value = null
+    formData.title = ''
+    formData.startTime = null
+    formData.endTime = null
+    formData.reminderTime = 15
+    formData.description = ''
+    formData.taskId = null
   } catch (error) {
     ElMessage.error('操作失败')
   }
@@ -559,6 +648,9 @@ const deleteSchedule = async (id: number | string | undefined) => {
   try {
     await scheduleStore.deleteSchedule(id)
     ElMessage.success('日程删除成功')
+    try {
+      await scheduleStore.fetchSchedules()
+    } catch (e) { console.warn('[Schedules] fetchSchedules after delete failed', e) }
   } catch (error) {
     ElMessage.error('删除失败')
   }
@@ -572,14 +664,12 @@ const editSchedule = async (schedule: any) => {
     editingScheduleId.value = null
     var detail = schedule
   } else {
-    // 保持原始 id 类型（string 或 number），避免对大整数进行 Number() 转换导致精度丢失
+    // 始终尝试从后端拉取完整详情以保证表单能够被正确填充
     editingScheduleId.value = idVal
     var detail = schedule
     try {
-      if (!schedule.startTime || !schedule.endTime || schedule.description == null) {
-        const res = await getSchedule(idVal as any, { silent: true })
-        detail = res?.data || res
-      }
+      const res = await getSchedule(idVal as any, { silent: true })
+      detail = res?.data || res || schedule
     } catch (e) {
       console.warn('getSchedule failed, using provided schedule', e)
       detail = schedule

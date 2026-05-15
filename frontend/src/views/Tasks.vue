@@ -545,6 +545,17 @@ onMounted(async () => {
       aiCreateHandler({ detail: payload })
       sessionStorage.removeItem('ai_pending_create_task')
     }
+    // 支持队列：ai_pending_create_tasks
+    const queued = sessionStorage.getItem('ai_pending_create_tasks')
+    if (queued) {
+      try {
+        const arr = JSON.parse(queued)
+        if (Array.isArray(arr) && arr.length > 0) {
+          aiCreateHandler({ detail: arr[0] })
+          // 不移除队列，保存由 saveTask 继续处理
+        }
+      } catch (e) { console.warn('failed parse queued tasks', e) }
+    }
   } catch (e) { /* ignore */ }
 })
 
@@ -599,6 +610,26 @@ const saveTask = async () => {
     }
     showDialog.value = false
     await fetchTasksWithFilters()
+    // 处理 AI 队列：如果存在 ai_pending_create_tasks 队列，则弹出下一个待创建项
+    try {
+      const queued = sessionStorage.getItem('ai_pending_create_tasks')
+      if (queued) {
+        const arr = JSON.parse(queued)
+        if (Array.isArray(arr) && arr.length > 0) {
+          // 当前已保存第一个，移除已处理项
+          arr.shift()
+          if (arr.length > 0) {
+            sessionStorage.setItem('ai_pending_create_tasks', JSON.stringify(arr))
+            // 打开下一个任务表单
+            setTimeout(() => {
+              try { window.dispatchEvent(new CustomEvent('ai-create-task', { detail: arr[0] })) } catch (e) { console.warn('dispatch next queued task failed', e) }
+            }, 220)
+          } else {
+            sessionStorage.removeItem('ai_pending_create_tasks')
+          }
+        }
+      }
+    } catch (e) { console.warn('process queued tasks failed', e) }
   } catch (error) {
     try {
       // @ts-ignore

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import dayjs from 'dayjs'
 import { getTimeRecords, createTimeRecord as apiCreateTimeRecord, updateTimeRecord as apiUpdateTimeRecord, deleteTimeRecord as apiDeleteTimeRecord } from '@/api/time-records'
 
 export interface TimeRecord {
@@ -22,9 +23,9 @@ export const useTimeRecordStore = defineStore('timeRecord', () => {
     loading.value = true
     error.value = null
     try {
-      const today = new Date()
-      const firstDay = startDate || new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]
-      const lastDay = endDate || new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0]
+        const today = dayjs()
+        const firstDay = startDate || today.startOf('month').format('YYYY-MM-DD')
+        const lastDay = endDate || today.endOf('month').format('YYYY-MM-DD')
 
       let attempt = 0
       while (attempt <= retries) {

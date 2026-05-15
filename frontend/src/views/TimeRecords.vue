@@ -48,13 +48,13 @@
         </div>
       <div v-if="timeRecordStore.loading" style="padding:20px;text-align:center">加载中...</div>
       <div v-else-if="timeRecordStore.error" style="padding:20px;text-align:center">
-        <div style="margin-bottom:8px;color:#f56c6c">加载时间记录失败：{{ timeRecordStore.error }}</div>
-        <el-button type="primary" @click="() => timeRecordStore.fetchRecords()">重试</el-button>
-      </div>
-      <div v-else-if="!timeRecordStore.records || timeRecordStore.records.length === 0" style="padding:20px;text-align:center">
-        <div style="margin-bottom:8px">当前没有时间记录。</div>
-        <el-button type="primary" @click="() => timeRecordStore.fetchRecords()">刷新</el-button>
-      </div>
+            <div style="margin-bottom:8px;color:#f56c6c">加载时间记录失败：{{ timeRecordStore.error }}</div>
+            <el-button type="primary" @click="() => loadRecordsForRange()">重试</el-button>
+          </div>
+          <div v-else-if="!timeRecordStore.records || timeRecordStore.records.length === 0" style="padding:20px;text-align:center">
+            <div style="margin-bottom:8px">当前没有时间记录。</div>
+            <el-button type="primary" @click="() => loadRecordsForRange()">刷新</el-button>
+          </div>
       <el-table v-else :data="timeRecordStore.records" stripe>
         <el-table-column label="任务" width="200">
           <template #default="{ row }">
@@ -76,7 +76,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onActivated, watch, nextTick } from 'vue'
 import ContributionHeatmap from '@/components/ContributionHeatmap.vue'
 import { useTaskStore } from '@/store/task'
 import { useTimeRecordStore } from '@/store/time-record'
@@ -89,7 +89,7 @@ import * as echarts from 'echarts'
 const taskStore = useTaskStore()
 const timeRecordStore = useTimeRecordStore()
 
-const dateRange = ref<any[]>([new Date(new Date().getTime() - 6 * 24 * 60 * 60 * 1000), new Date()])
+const dateRange = ref<any[]>([dayjs().startOf('month').toDate(), dayjs().endOf('month').toDate()])
 
 let chartDailyFocus: any = null
 let chartTaskTrend: any = null
@@ -225,6 +225,8 @@ const loadRecordsForRange = async () => {
     const start = dayjs(dateRange.value[0]).format('YYYY-MM-DD')
     const end = dayjs(dateRange.value[1]).format('YYYY-MM-DD')
     await timeRecordStore.fetchRecords(start, end)
+    // 确保在加载记录后触发任务列表的后台加载（若尚未加载），以便随后更新图表的任务名称映射
+    try { taskStore.fetchTasks().catch((e:any)=>{ console.warn('fetchTasks (background) failed', e) }) } catch (e) { /* ignore */ }
     // ensure DOM ready
     await nextTick()
     initCharts()
@@ -244,13 +246,24 @@ const onDateRangeChange = (val: any) => {
 }
 
 onMounted(async () => {
+  // 尝试并行加载任务与时间记录，避免任务加载失败阻塞记录显示
+  // 把 fetchTasks 放在后台执行，保证记录能尽早渲染
+  taskStore.fetchTasks().catch((e: any) => {
+    console.warn('fetchTasks failed (non-blocking):', e)
+  })
+
   try {
-    await taskStore.fetchTasks()
     await loadRecordsForRange()
   } catch (error: any) {
     console.error('TimeRecords load failed', error)
     ElMessage.error(error && error.message ? error.message : '加载时间记录失败，请稍后重试')
   }
+})
+
+// 当页面被 <keep-alive> 缓存后再次激活时，onMounted 不会触发，使用 onActivated 重新加载数据
+onActivated(() => {
+  // 忽略错误，UI 会展示重试按钮
+  loadRecordsForRange().catch(() => {})
 })
 
 watch(dateRange, () => {
@@ -259,6 +272,11 @@ watch(dateRange, () => {
 
 // also update charts when records change
 watch(() => timeRecordStore.records, () => {
+  nextTick(() => updateAllCharts())
+}, { deep: true })
+
+// 当任务列表变化时（例如刚刚从后端加载完成），重新渲染图表以补全任务名映射
+watch(() => taskStore.tasks, () => {
   nextTick(() => updateAllCharts())
 }, { deep: true })
 
@@ -305,7 +323,7 @@ const stopTimer = async () => {
     ElMessage.success('时间记录保存成功')
     elapsedTime.value = 0
     selectedTaskId.value = undefined
-    await timeRecordStore.fetchRecords()
+    await loadRecordsForRange()
   } catch (error) {
     ElMessage.error('保存失败')
   }
@@ -335,7 +353,7 @@ const saveManualRecord = async () => {
     manualForm.taskId = undefined
     manualForm.duration = 0
     manualForm.note = ''
-    await timeRecordStore.fetchRecords()
+    await loadRecordsForRange()
   } catch (error) {
     ElMessage.error('保存失败')
   }
@@ -374,7 +392,7 @@ const getTaskTitle = (taskId?: string | number) => {
   const t = taskStore.tasks.find(t => String(t.id) === String(taskId))
   const title = t && (t as any).title ? String((t as any).title).trim() : ''
   if (title) return safeTaskTitle(title)
-  return String(taskId)
+  return `任务${taskId}`
 }
 
 const deleteRecord = async (id: string | number | undefined) => {
@@ -382,12 +400,12 @@ const deleteRecord = async (id: string | number | undefined) => {
   try {
     deletingId.value = id
     await timeRecordStore.deleteRecord(id)
-    // 确保从后端重新拉取以校验删除是否真正生效
-    try { await timeRecordStore.fetchRecords() } catch (e) { /* ignore */ }
+    // 确保从后端重新拉取以校验删除是否真正生效（使用当前 dateRange）
+    try { await loadRecordsForRange() } catch (e) { /* ignore */ }
     ElMessage.success('记录删除成功')
   } catch (error: any) {
     ElMessage.error((error && error.message) ? error.message : '删除失败')
-    try { await timeRecordStore.fetchRecords() } catch (e) { /* ignore */ }
+    try { await loadRecordsForRange() } catch (e) { /* ignore */ }
   } finally {
     deletingId.value = undefined
   }
