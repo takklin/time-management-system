@@ -1,3 +1,26 @@
+# 设计图文件（.drawio 和图片）
+*.drawio
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# Python 脚本和临时文件
+*.py
+*.pyc
+__pycache__/
+
+# 工具目录（如 tools/）
+tools/
+
+# 数据库迁移脚本（自动生成）
+db_migration_*.sql
+
+# 其他常见忽略
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
 # Java / Maven
 target/
 *.class
