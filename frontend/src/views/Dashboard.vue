@@ -199,6 +199,7 @@ import { ref, reactive, onMounted, computed, nextTick } from 'vue'
 import { useUserStore } from '@/store/user'
 import { useTaskStore } from '@/store/task'
 import { useTimeRecordStore } from '@/store/time-record'
+import { usePomodoroStore } from '@/store/pomodoro'
 import { useScheduleStore } from '@/store/schedule'
 import ChartCard from '@/components/ChartCard.vue'
 import TaskItem from '@/components/TaskItem.vue'
@@ -676,6 +677,14 @@ const completeTask = async (id: number | undefined, newCompleted?: boolean) => {
   }
 
     try {
+      // 若该任务当前被番茄钟计时，先停止并记录
+      try {
+        const pomodoro = usePomodoroStore()
+        const activeId = pomodoro.activeTaskId
+        if (pomodoro.isRunning && activeId != null && String(activeId) === String(id)) {
+          try { await pomodoro.stop(true) } catch (e) { console.warn('stop pomodoro before complete failed (dashboard)', e) }
+        }
+      } catch (err) { console.warn('pomodoro pre-complete check failed (dashboard)', err) }
       // refresh time records to ensure latest (拉取最近 30 天的记录以覆盖大部分场景)
       try { await fetchRecordsForRange('month') } catch (e) { /* ignore */ }
       const taskObj: any = taskStore.tasks.find((t: any) => String(t.id) === String(id))

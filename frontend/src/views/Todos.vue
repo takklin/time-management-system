@@ -330,6 +330,7 @@ import Draggable from 'vuedraggable'
 import TodoItem from '@/components/TodoItem.vue'
 import DurationSlider from '@/components/DurationSlider.vue'
 import { useTimeRecordStore } from '@/store/time-record'
+import { usePomodoroStore } from '@/store/pomodoro'
 import { useTodoStore, type Todo } from '@/stores/todo'
 import { useTaskStore } from '@/store/task'
 import { useUserStore } from '@/store/user'
@@ -338,6 +339,7 @@ const todoStore = useTodoStore()
 const timeRecordStore = useTimeRecordStore()
 const taskStore = useTaskStore()
 const userStore = useUserStore()
+const pomodoroStore = usePomodoroStore()
 const showOKRInfo = ref(false)
 const showDecisionHelper = ref(false)
 
@@ -410,6 +412,14 @@ const completeDuration = ref<number | null>(null)
 
 const onComplete = async (task: Todo, checked?: boolean) => {
   const markCompleted = typeof checked === 'boolean' ? checked : true
+  // 如果当前任务正在被番茄钟计时，先停止并记录实际用时，确保登出/完成时的数据一致
+  try {
+    const activeId = pomodoroStore.activeTaskId
+    const taskIdToCompare = (task as any).originTaskId ?? task.id
+    if (pomodoroStore.isRunning && activeId != null && String(activeId) === String(taskIdToCompare)) {
+      try { await pomodoroStore.stop(true) } catch (e) { console.warn('stop pomodoro before complete failed', e) }
+    }
+  } catch (e) { console.warn('pomodoro check on complete failed', e) }
   if (!markCompleted) {
     // 取消完成：若为后端任务，调用 TaskStore；否则本地回滚
     if (task.originTaskId) {

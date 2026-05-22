@@ -852,6 +852,13 @@ const completeTask = async (id: number | undefined, newCompleted?: boolean) => {
   }
 
   try {
+    // 如果该任务正由番茄钟计时，先停止番茄钟并记录已用时间
+    try {
+      const activeId = pomodoroStore.activeTaskId
+      if (pomodoroStore.isRunning && activeId != null && String(activeId) === String(id)) {
+        try { await pomodoroStore.stop(true) } catch (e) { console.warn('stop pomodoro before complete failed', e) }
+      }
+    } catch (e) { console.warn('pomodoro pre-complete check failed', e) }
     // refresh time records
     try { await fetchRecordsForRange('month') } catch (e) { /* ignore */ }
     const taskObj: any = taskStore.tasks.find((t: any) => String(t.id) === String(id))

@@ -7,6 +7,9 @@ import { useTimeRecordStore } from '@/store/time-record'
 import { useTodoStore } from '@/stores/todo'
 import { removeToken, getToken } from '@/utils/auth'
 import { setToken as saveToken } from '@/utils/auth'
+import { createAlertClient, disconnectClient } from '@/utils/alertSocket'
+import { useAlertStore } from '@/store/alert'
+import { useMessageStore } from '@/store/message'
 
 export interface User {
   id: number
@@ -21,6 +24,9 @@ export const useUserStore = defineStore('user', () => {
   const user = ref<User | null>(null)
   const token = ref<string | null>(getToken())
   const loading = ref(false)
+
+  // WebSocket 客户端实例（SockJS + STOMP）
+  let alertClient: any = null
 
   const isLoggedIn = computed(() => !!token.value)
 
@@ -81,6 +87,44 @@ export const useUserStore = defineStore('user', () => {
 
       user.value = response.user
       saveToken(response.token)
+      // 登录成功后建立 WebSocket 连接以接收实时预警
+      try {
+        alertClient = await createAlertClient(response.token, (payload: any) => {
+          // 通过全局事件转发到 UI 层，组件可以监听 window 上的 'tm:alert'
+          try { window.dispatchEvent(new CustomEvent('tm:alert', { detail: payload })) } catch (e) { console.warn('dispatch alert event failed', e) }
+        }, response.user?.role === 'admin')
+        // 登录后：先从服务端拉取未处理告警，再回放登录前缓存的推送（如果有）
+          try {
+            const alertStore = useAlertStore()
+            alertStore.fetchUnhandled().catch(() => {})
+            const messageStore = useMessageStore()
+            try {
+              const pendingRaw = (window as any).__tm_pending_alerts
+              const pending = Array.isArray(pendingRaw) ? pendingRaw : []
+              if (pending.length > 0) {
+                try { console.info('[UserStore] replaying pending alerts', pending.length) } catch (e) {}
+                for (const p of pending) {
+                  try { alertStore.addAlert(p) } catch (e) { console.warn('replay addAlert failed', e) }
+                }
+                try { delete (window as any).__tm_pending_alerts } catch (e) { (window as any).__tm_pending_alerts = [] }
+              }
+            } catch (e) { console.warn('replaying pending alerts failed', e) }
+
+            try {
+              const pendingMsgRaw = (window as any).__tm_pending_messages
+              const pendingMsg = Array.isArray(pendingMsgRaw) ? pendingMsgRaw : []
+              if (pendingMsg.length > 0) {
+                try { console.info('[UserStore] replaying pending messages', pendingMsg.length) } catch (e) {}
+                for (const p of pendingMsg) {
+                  try { messageStore.addMessage(p) } catch (e) { console.warn('replay addMessage failed', e) }
+                }
+                try { delete (window as any).__tm_pending_messages } catch (e) { (window as any).__tm_pending_messages = [] }
+              }
+            } catch (e) { console.warn('replaying pending messages failed', e) }
+          } catch (e) { console.warn('fetchUnhandled after login failed', e) }
+      } catch (e) {
+        console.warn('createAlertClient failed', e)
+      }
       return response
     } finally {
       loading.value = false
@@ -129,6 +173,22 @@ export const useUserStore = defineStore('user', () => {
         response.role = response.role?.toLowerCase()
       }
       user.value = response
+      // 如果页面加载时已有 token，确保建立 WebSocket 连接以接收实时预警
+      try {
+        if (!alertClient) {
+          alertClient = await createAlertClient(token.value, (payload: any) => {
+            try { window.dispatchEvent(new CustomEvent('tm:alert', { detail: payload })) } catch (e) { console.warn('dispatch alert event failed', e) }
+          }, response?.role === 'admin')
+          // 登录态存在时也从后端拉取未处理告警以同步历史
+          try {
+            const alertStore = useAlertStore()
+            alertStore.fetchUnhandled().catch(() => {})
+            try { const messageStore = useMessageStore(); messageStore.fetchMessages({ page: 1, size: 20 }).catch(() => {}) } catch (e) {}
+          } catch (e) { console.warn('fetchUnhandled on fetchUserInfo failed', e) }
+        }
+      } catch (e) {
+        console.warn('createAlertClient on fetchUserInfo failed', e)
+      }
     } finally {
       loading.value = false
     }
@@ -166,6 +226,7 @@ export const useUserStore = defineStore('user', () => {
     token.value = null
     user.value = null
     removeToken()
+    try { disconnectClient(alertClient); alertClient = null } catch (e) {}
     // 清理与用户相关的前端缓存/状态，避免切换账户时残留上一个用户的数据
     try {
       const scheduleStore = useScheduleStore()

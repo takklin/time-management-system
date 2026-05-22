@@ -8,12 +8,14 @@ import 'element-plus/theme-chalk/dark/css-vars.css'
 import App from './App.vue'
 import router from './router'
 import '@/assets/styles/main.css'
+import alertListener from '@/plugins/alertListener'
 
 const app = createApp(App)
 
 app.use(createPinia())
 app.use(router)
 app.use(ElementPlus, { locale: zhCn })
+app.use(alertListener)
 
 // 初始化时尝试加载用户信息
 import { useUserStore } from '@/store/user'

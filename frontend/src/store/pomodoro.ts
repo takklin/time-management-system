@@ -1,10 +1,25 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import dayjs from 'dayjs'
+import { getToken } from '@/utils/auth'
 import { useTimeRecordStore } from '@/store/time-record'
 import { useTaskStore } from '@/store/task'
 
-const SESSION_KEY = 'pomodoro_session_v1'
+const SESSION_KEY_PREFIX = 'pomodoro_session_v1_user_'
+
+function getSessionKey() {
+  try {
+    const token = getToken()
+    if (!token) return SESSION_KEY_PREFIX + 'anon'
+    const parts = token.split('.')
+    if (parts.length < 2) return SESSION_KEY_PREFIX + 'unknown'
+    const payload = JSON.parse(atob(parts[1]))
+    const userId = payload?.sub || payload?.userId || payload?.id || 'unknown'
+    return `${SESSION_KEY_PREFIX}${userId}`
+  } catch (e) {
+    return SESSION_KEY_PREFIX + 'unknown'
+  }
+}
 
 export const usePomodoroStore = defineStore('pomodoro', () => {
   const activeTaskId = ref<string | number | null>(null)
@@ -42,16 +57,16 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
       startedAt: startedAt.value,
       currentRecordId: currentRecordId.value,
     }
-    try { localStorage.setItem(SESSION_KEY, JSON.stringify(payload)) } catch (e) { }
+    try { localStorage.setItem(getSessionKey(), JSON.stringify(payload)) } catch (e) { }
   }
 
   function clearSessionStorage() {
-    try { localStorage.removeItem(SESSION_KEY) } catch (e) { }
+    try { localStorage.removeItem(getSessionKey()) } catch (e) { }
   }
 
   async function restoreSession() {
     try {
-      const raw = localStorage.getItem(SESSION_KEY)
+      const raw = localStorage.getItem(getSessionKey())
       if (!raw) return
       const s = JSON.parse(raw)
       if (!s) return
@@ -400,9 +415,10 @@ export const usePomodoroStore = defineStore('pomodoro', () => {
   // listen to storage changes to sync across tabs
   try {
     window.addEventListener('storage', (e) => {
-      if (e.key === SESSION_KEY) {
-        restoreSession()
-      }
+      // react only to pomodoro session keys (per-user)
+      try {
+        if (e.key && String(e.key).startsWith(SESSION_KEY_PREFIX)) restoreSession()
+      } catch (err) { /* ignore */ }
     })
   } catch (e) {}
 

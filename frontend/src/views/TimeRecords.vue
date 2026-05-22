@@ -76,7 +76,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onActivated, watch, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onActivated, onBeforeUnmount, watch, nextTick } from 'vue'
 import ContributionHeatmap from '@/components/ContributionHeatmap.vue'
 import { useTaskStore } from '@/store/task'
 import { useTimeRecordStore } from '@/store/time-record'
@@ -89,7 +89,7 @@ import * as echarts from 'echarts'
 const taskStore = useTaskStore()
 const timeRecordStore = useTimeRecordStore()
 
-const dateRange = ref<any[]>([dayjs().startOf('month').toDate(), dayjs().endOf('month').toDate()])
+const dateRange = ref<any[]>([dayjs().subtract(6, 'day').startOf('day').toDate(), dayjs().endOf('day').toDate()])
 
 let chartDailyFocus: any = null
 let chartTaskTrend: any = null
@@ -237,6 +237,20 @@ const loadRecordsForRange = async () => {
   }
 }
 
+// 拉取最近 n 天（含今日）的时间记录并更新图表，默认 7 天
+const refreshLastNDays = async (n = 7) => {
+  try {
+    const start = dayjs().subtract(n - 1, 'day').format('YYYY-MM-DD')
+    const end = dayjs().format('YYYY-MM-DD')
+    await timeRecordStore.fetchRecords(start, end)
+    await nextTick()
+    initCharts()
+    updateAllCharts()
+  } catch (err) {
+    console.warn('refreshLastNDays failed', err)
+  }
+}
+
 // 处理 el-date-picker 的 change 事件（v-model 会自动同步 dateRange）
 const onDateRangeChange = (val: any) => {
   if (Array.isArray(val) && val.length === 2) dateRange.value = val
@@ -258,12 +272,29 @@ onMounted(async () => {
     console.error('TimeRecords load failed', error)
     ElMessage.error(error && error.message ? error.message : '加载时间记录失败，请稍后重试')
   }
+  // 监听全局强制停止计时事件（登出/切换用户时触发）
+  try { window.addEventListener('tm:force-stop-timer', onForceStopTimer) } catch (e) { /* ignore */ }
+  // 监听番茄钟已记录事件及通用的 time-record:created 事件，刷新最近 7 天的列表（保证新记录能被展示）
+  const handlePomodoroRecorded = () => { refreshLastNDays(7) }
+  const handleTimeRecordCreated = () => { refreshLastNDays(7) }
+  try { window.addEventListener('pomodoro:recorded', handlePomodoroRecorded) } catch (e) { /* ignore */ }
+  try { window.addEventListener('time-record:created', handleTimeRecordCreated) } catch (e) { /* ignore */ }
 })
 
 // 当页面被 <keep-alive> 缓存后再次激活时，onMounted 不会触发，使用 onActivated 重新加载数据
 onActivated(() => {
   // 忽略错误，UI 会展示重试按钮
   loadRecordsForRange().catch(() => {})
+})
+
+onBeforeUnmount(() => {
+  if (timerInterval) {
+    clearInterval(timerInterval)
+    timerInterval = null
+  }
+  try { window.removeEventListener('tm:force-stop-timer', onForceStopTimer) } catch (e) { /* ignore */ }
+  try { window.removeEventListener('pomodoro:recorded', handlePomodoroRecorded) } catch (e) { /* ignore */ }
+  try { window.removeEventListener('time-record:created', handleTimeRecordCreated) } catch (e) { /* ignore */ }
 })
 
 watch(dateRange, () => {
@@ -326,6 +357,17 @@ const stopTimer = async () => {
     await loadRecordsForRange()
   } catch (error) {
     ElMessage.error('保存失败')
+  }
+}
+
+// 全局强制停止计时的处理器（例如登出时）
+const onForceStopTimer = async () => {
+  if (isRunning.value) {
+    try {
+      await stopTimer()
+    } catch (e) {
+      console.warn('force stop timer failed', e)
+    }
   }
 }
 

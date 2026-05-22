@@ -397,13 +397,13 @@ const aiHandler = (e: any) => {
 }
 
 // AI 助手：出差/日程变动更新事件处理器
-const aiUpdateHandler = (e: any) => {
+const aiUpdateHandler = async (e: any) => {
   try {
     const payload = e.detail || {}
     const data = payload.data || payload || {}
-    // 支持两种结构：{ original: {...}, updated: {...} } 或 直接 updated-like payload
+    // 支持多种结构：{ original: {...}, updated/proposed: {...} } 或 直接 updated-like payload
     const original = data.original || data.originalSchedule || data.orig || null
-    const updated = data.updated || data.updatedSchedule || data.new || data || null
+    const updated = data.updated || data.updatedSchedule || data.new || data.proposed || data.proposedSchedule || data || null
 
     // 如果没有实际更新内容，退回到通用处理
     const target = updated || payload || {}
@@ -414,6 +414,18 @@ const aiUpdateHandler = (e: any) => {
       if (original && (original.id || original._id)) {
         const idStr = String(original.id || original._id)
         found = scheduleStore.schedules.find((s: any) => String(s.id) === idStr)
+        // 若本地未命中，尝试从后端拉取完整日程
+        if (!found) {
+          try {
+            const res = await getSchedule(idStr, { silent: true })
+            const remote = res?.data || res || null
+            if (remote) {
+              found = remote
+            }
+          } catch (fetchErr) {
+            console.warn('[Schedules] fetch original schedule by id failed', fetchErr)
+          }
+        }
       }
     } catch (e) { /* ignore */ }
 
@@ -426,7 +438,7 @@ const aiUpdateHandler = (e: any) => {
       }
     }
 
-    // 将 updated 字段填入表单，若找到原日程则打开为编辑模式
+    // 将 updated/proposed 字段填入表单，若找到原日程则打开为编辑模式
     editingScheduleId.value = found && found.id != null ? found.id : null
     formData.title = (target && (target.title || target.name)) || (found && found.title) || ''
     // 兼容多种字段名
@@ -453,8 +465,10 @@ const aiUpdateHandler = (e: any) => {
 
     formData.startTime = rawStart ? normalizeToRange(rawStart, false) : (found && found.startTime ? new Date(found.startTime) : null)
     formData.endTime = rawEnd ? normalizeToRange(rawEnd, true) : (found && found.endTime ? new Date(found.endTime) : null)
-    formData.reminderTime = (target && (target.reminderTime ?? target.reminder)) ?? (found && found.reminderTime) ?? 15
-    formData.description = (target && (target.description || target.note)) ?? (found && found.description) ?? ''
+    // 兼容后端的 remindBefore 字段（scheduleToMap 输出）以及 reminderTime/reminder
+    const remoteRemind = (target && (target.reminderTime ?? target.reminder ?? target.remindBefore ?? target.remind_before)) ?? (found && (found.reminderTime ?? found.remindBefore ?? found.remind_before))
+    formData.reminderTime = remoteRemind ?? 15
+    formData.description = (target && (target.description || target.note)) ?? (found && (found.description || found.note)) ?? ''
 
     showDialog.value = true
     ElMessage.info('检测到日程变动，已打开编辑弹窗， 请确认并保存以完成更新')

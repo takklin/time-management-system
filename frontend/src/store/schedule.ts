@@ -59,6 +59,13 @@ export const useScheduleStore = defineStore('schedule', () => {
       console.error('Failed to create schedule:', error)
       // 从后端尝试读取消息
       const serverMsg = error?.response?.data?.msg || error?.message || '创建日程失败（服务器错误）'
+      // 若缺少开始/结束时间，则不要把不完整数据放到自动重试队列（会导致反复同步失败）
+      if (!schedule || !schedule.startTime || !schedule.endTime) {
+        ElMessage.warning(`${serverMsg}；日程缺少开始或结束时间，已保存为待处理项，请在日程页面补全并保存。`)
+        try { sessionStorage.setItem('ai_pending_create_schedule', JSON.stringify(schedule || {})) } catch (e) { /* ignore */ }
+        return schedule
+      }
+
       ElMessage.warning(`${serverMsg}；已在本地保存，稍后会尝试同步。`)
       // 本地回退：生成临时负 id 并标记为 _local
       const localId = Date.now() * -1
@@ -77,6 +84,15 @@ export const useScheduleStore = defineStore('schedule', () => {
     if (!pending || pending.length === 0) return
     for (const ps of pending.slice()) {
       try {
+        // 如果 pending 条目缺少必要的时间字段，移交为人工待处理，避免反复失败
+        if (!ps.startTime || !ps.endTime) {
+          console.warn('syncLocalSchedules: skipping invalid pending schedule (missing start/end)', ps)
+          try { sessionStorage.setItem('ai_pending_create_schedule', JSON.stringify(ps)) } catch (e) { /* ignore */ }
+          const i = pending.findIndex(x => x.id === ps.id)
+          if (i !== -1) pending.splice(i, 1)
+          continue
+        }
+
         // 移除本地临时字段再上传
         const toUpload = { ...ps }
         delete (toUpload as any)._local

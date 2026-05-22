@@ -99,11 +99,10 @@
                 <el-tag :type="severityType(alert.severity)">{{ alert.severity }}</el-tag>
               </div>
               <div class="alert-desc">{{ alert.description }}</div>
-              <div class="alert-suggestion">
-                <strong>💡 建议:</strong> {{ alert.suggestion }}
-              </div>
+              <!-- 建议文本已从此视图移除，改为通过“AI建议”按钮将预警内容复制到左侧聊天输入 -->
               <div class="alert-actions">
                 <el-button text size="small" @click="handleAlert(alert.id)">标记处理</el-button>
+                <el-button text size="small" type="primary" @click="copyToAI(alert)" style="margin-left:8px">AI建议</el-button>
               </div>
             </div>
           </div>
@@ -114,11 +113,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted, nextTick, computed } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { ElMessage } from 'element-plus'
 import * as adminAiApi from '@/api/admin/ai'
+import { useAlertStore } from '@/store/alert'
 
 interface ChatMessage {
   id: string
@@ -142,7 +142,10 @@ const connectionStatus = ref<any>(null)
 const chatMessages = ref<ChatMessage[]>([])
 const queryInput = ref('')
 const queryLoading = ref(false)
-const unhandledAlerts = ref<Alert[]>([])
+const alertStore = useAlertStore()
+const unhandledAlerts = computed(() => {
+  return (alertStore.alerts || []).filter((a: any) => !a.read)
+})
 const messagesContainer = ref<HTMLElement>()
 const sessionId = ref('')  // 会话 ID，用于维持对话上下文
 let msgIdCounter = 0
@@ -405,43 +408,11 @@ const quickQuery = async (type: string) => {
 
 const refreshAlerts = async () => {
   try {
-    // 优先使用实时危险摘要接口（与仪表盘一致），避免依赖持久化的 ai_alert 表
-    const danger = await adminAiApi.getDangerSummary()
-    console.debug('[AI] getDangerSummary response:', danger)
-
-    const logs = Array.isArray(danger?.logs) ? danger.logs : []
-
-    // 将 OperationLog 映射为预警项格式（兼容原有 UI）
-    unhandledAlerts.value = logs.map((l: any, idx: number) => {
-      const risk = (l.riskLevel || l.risk_level || '').toString().toLowerCase()
-      const severity = risk === 'critical' || risk === 'high' ? 'HIGH' : (risk === 'medium' ? 'MEDIUM' : 'LOW')
-      const createdAt = l.createdAt || l.created_at || l.created_at || ''
-      const operator = l.operator || l.user || l.ip || '系统'
-      const title = `${l.action || '操作'} 由 ${operator}`
-      const description = `${operator} 在 ${createdAt} 执行了 ${l.action || ''}，目标: ${l.target || ''}，结果: ${l.result || ''}`
-
-      return {
-        id: l.id || -(idx + 1),
-        alertType: l.action || 'OPERATION',
-        severity,
-        title,
-        description,
-        suggestion: l.suggestion || '',
-        relatedLogIds: l.related_log_ids || null,
-        isHandled: 0,
-        createdAt: createdAt
-      }
-    })
-
-    // 如果没有日志，再回退尝试读取持久化的 ai_alert（兼容旧逻辑）
-    if (unhandledAlerts.value.length === 0) {
-      try {
-        const alerts = await adminAiApi.getAlerts()
-        console.debug('[AI] fallback getAlerts response:', alerts)
-        unhandledAlerts.value = Array.isArray(alerts) ? alerts : []
-      } catch (err) {
-        console.warn('[AI] fallback getAlerts 失败', err)
-      }
+    // 使用 alertStore 的未处理告警，若需要强制同步则调用 fetchUnhandled
+    try {
+      await alertStore.fetchUnhandled()
+    } catch (err) {
+      console.warn('[AI] fetchUnhandled failed', err)
     }
   } catch (error: any) {
     console.error('加载预警失败:', error)
@@ -452,8 +423,7 @@ const refreshAlerts = async () => {
 
 const handleAlert = async (alertId: number) => {
   try {
-    await adminAiApi.markAlertHandled(alertId, { note: '已处理' })
-    unhandledAlerts.value = unhandledAlerts.value.filter(a => a.id !== alertId)
+    await alertStore.markAsRead(alertId)
     ElMessage.success('✓ 已标记处理')
   } catch (error: any) {
     console.error('标记预警失败:', error)
@@ -461,13 +431,31 @@ const handleAlert = async (alertId: number) => {
   }
 }
 
-const severityType = (severity: string) => {
-  const types: Record<string, string> = {
-    HIGH: 'danger',
-    MEDIUM: 'warning',
-    LOW: 'info'
+/**
+ * 将预警文本复制到左侧 AI 聊天输入并聚焦
+ */
+const copyToAI = async (alert: Alert) => {
+  const text = `请分析这条安全预警：${alert.title}\n描述：${alert.description || ''}\n请给出可能的处置建议。`;
+  queryInput.value = text
+  await nextTick()
+  // 尝试聚焦到输入框（Element Plus input 内部为 .el-input__inner）
+  try {
+    const inputEl = document.querySelector('.admin-ai-assistant .input-group .el-input__inner') as HTMLInputElement | null
+    if (inputEl) {
+      inputEl.focus()
+    }
+  } catch (e) {
+    // ignore
   }
-  return types[severity] || 'info'
+}
+
+const severityType = (severity: string) => {
+  const s = (severity || '').toString().toLowerCase()
+  if (s === 'critical') return 'danger'
+  if (s === 'high') return 'warning'
+  if (s === 'medium' || s === 'med') return 'warning'
+  if (s === 'low' || s === 'info') return 'info'
+  return 'info'
 }
 
 const scrollToBottom = async () => {
@@ -638,6 +626,15 @@ const escapeHtml = (text: string | undefined | null) => {
         &.LOW {
           border-left-color: #1890ff;
           background: #e6f7ff;
+        }
+        /* 支持小写 severity 名称 */
+        &.critical, &.CRITICAL {
+          border-left-color: #ff4d4f;
+          background: #fff1f0;
+        }
+        &.high, &.HIGH {
+          border-left-color: #fa8c16;
+          background: #fff7e6;
         }
         
         .alert-title {

@@ -16,10 +16,15 @@
           </el-input>
         </div>
 
-      <el-button type="primary" :text="true" @click="showNotifications">
+      <el-button type="primary" :text="true" ref="bellBtn" @click="showNotifications" :aria-expanded="drawerVisible">
         <el-icon><Bell /></el-icon>
-        <el-badge :value="notificationCount" class="badge" />
+        <el-badge :value="isAdmin ? alertStore.unreadCount : messageStore.unreadCount" class="badge" />
       </el-button>
+
+      <el-drawer v-model="drawerVisible" :title="isAdmin ? '告警中心' : '收件箱'" direction="rtl" size="480px" :teleported="true">
+        <!-- Only render dynamic panel when component is available to avoid HMR/undefined errors -->
+        <component v-if="(isAdmin ? AlertPanel : MessagePanel)" :is="isAdmin ? AlertPanel : MessagePanel" :key="drawerVisible ? 'open' : 'closed'" />
+      </el-drawer>
 
       <el-dropdown>
         <div class="user-info">
@@ -39,18 +44,27 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '@/store/user'
+import { useAlertStore } from '@/store/alert'
+import { useMessageStore } from '@/store/message'
 import { ElMessage } from 'element-plus'
 import { Search, Bell } from '@element-plus/icons-vue'
+import AlertPanel from '@/components/AlertPanel.vue'
+import MessagePanel from '@/components/MessagePanel.vue'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
 
 const searchText = ref('')
+const alertStore = useAlertStore()
+const messageStore = useMessageStore()
 const notificationCount = ref(0)
+const drawerVisible = ref(false)
+
+const isAdmin = computed(() => ((userStore.user?.role || '').toLowerCase() === 'admin'))
 
   const userAvatar = computed(() => {
     const defaultAvatar = '/api/v1/auth/avatar/placeholder.png'
@@ -72,8 +86,13 @@ const notificationCount = ref(0)
   return `${baseURL}${avatar}`
 })
 
-const showNotifications = () => {
-  ElMessage.info('暂无新通知')
+const showNotifications = async () => {
+  try { console.info('[AppHeader] bell clicked -> opening drawer') } catch (e) {}
+  try {
+    if (isAdmin.value) await alertStore.fetchUnhandled().catch(() => {})
+    else await messageStore.fetchMessages({ page: 1, size: 20 }).catch(() => {})
+  } catch (e) {}
+  drawerVisible.value = true
 }
 
 const goToProfile = () => {
@@ -97,6 +116,17 @@ const logout = async () => {
   ElMessage.success('已退出登录')
   router.push('/login')
 }
+
+// 打开抽屉时加载告警（避免在登录页面就触发）
+watch(drawerVisible, (v) => {
+  if (v) {
+    try {
+      console.info('[AppHeader] drawerVisible opened -> fetching data')
+      if (isAdmin.value) alertStore.fetchUnhandled().catch(() => {})
+      else messageStore.fetchMessages({ page: 1, size: 20 }).catch(() => {})
+    } catch (e) { console.warn('fetch on open failed', e) }
+  }
+})
 </script>
 
 <style scoped>

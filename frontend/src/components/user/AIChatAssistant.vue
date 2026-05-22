@@ -559,7 +559,7 @@ const sendMessage = async () => {
         console.debug('[AI助手] 构建上下文分组 counts=', counts, 'samples:', { high: highList.slice(0,3).map(t=>t.title), medium: mediumList.slice(0,3).map(t=>t.title), low: lowList.slice(0,3).map(t=>t.title), completed: completedList.slice(0,3).map(t=>t.title) })
         return { hasContext: true, high_priority_tasks: highList, medium_priority_tasks: mediumList, procrastinate_tasks: lowList, completed_tasks: completedList, counts, overload, weekly_core_done: weekly }
       })()
-      // 调试：在发送前打印完整上下文预览，便于在浏览器控制台确认 medium_priority_tasks 是否被传递
+      // 调试：在发送前打印完整上下文预览（包含 page context 与会话历史预览）
       try {
         console.log('[AI助手] 将发送 promote 的上下文预览：', {
           question: userMsg,
@@ -571,10 +571,20 @@ const sendMessage = async () => {
         })
       } catch (e) { console.warn('[AI助手] 上下文打印失败', e) }
 
-      // 始终使用 promote（并传入最近历史）；promote 失败时回退到 chat
-      // 构建发送给后端的最近历史：仅包含 role 为 user/assistant 且 content 为纯字符串的消息
-      // 同时过滤掉明显的 JSON 字符串（例如包含 "type" 字段的结构化消息），避免把结构化建议作为对话历史发送给后端
-      const recent = (messages.value || [])
+      // 构建发送给后端的最近历史：优先使用组件内消息；若为空则回退到 localStorage 中的会话历史
+      const recentSource = (messages.value && messages.value.length > 0) ? messages.value : (() => {
+        try {
+          const key = 'ai_chat_history_' + sessionId.value
+          const raw = localStorage.getItem(key)
+          if (raw) {
+            const parsed = JSON.parse(raw)
+            if (Array.isArray(parsed)) return parsed
+          }
+        } catch (e) { /* ignore */ }
+        return []
+      })()
+
+      const recent = (recentSource || [])
         .slice(-12)
         .filter((m:any) => {
           if (m.role !== 'user' && m.role !== 'assistant') return false
@@ -584,11 +594,22 @@ const sendMessage = async () => {
           return true
         })
         .map((m:any) => ({ role: m.role, content: m.content }))
+
+      // 打印 recent 预览，便于排查历史是否被正确附加
+      try { console.debug('[AI助手] recent messages preview:', recent.map((r:any)=>({ role: r.role, content: String(r.content || '').substring(0,200) }))) } catch (e) {}
+
+      // 始终尝试使用 promote（并传入最近历史）；promote 失败时先尝试仅使用 messages 再回退到 chat
       try {
         answer = await userAiApi.promote({ question: userMsg, context: context || null, model: provider, messages: recent })
       } catch (promoteErr) {
-        console.warn('[AI助手] promote 接口调用失败，回退到 chat：', promoteErr)
-        answer = await userAiApi.chat({ message: userMsg, model: provider })
+        console.warn('[AI助手] promote 接口调用失败，尝试仅用 messages 重试 promote：', promoteErr)
+        try {
+          // 有时 context（结构化页面数据）可能导致后端解析失败，尝试不传 context 仅发送 messages
+          answer = await userAiApi.promote({ question: userMsg, model: provider, messages: recent })
+        } catch (promoteErr2) {
+          console.warn('[AI助手] promote (no context) 也失败，回退到 chat：', promoteErr2)
+          answer = await userAiApi.chat({ message: userMsg, model: provider })
+        }
       }
     } catch (ctxErr) {
       console.warn('[AI助手] 上下文增强调用失败，回退到普通 chat：', ctxErr)
@@ -677,6 +698,45 @@ const sendMessage = async () => {
         }
       }
 
+      // 从自然语言文本尝试解析日期区间，例如 “22到24号” / “5月22到24号” 等
+      const parseDateRangeFromText = (text: string) => {
+        if (!text || typeof text !== 'string') return null
+        const t = text.replace(/\s+/g, '')
+        // 带年带月：2026年5月22到24号
+        let m = t.match(/(\d{4})年(\d{1,2})月(\d{1,2})[日号]?[至到\-~](\d{1,2})[日号]?/)
+        if (m) {
+          const year = Number(m[1])
+          const month = Number(m[2])
+          const d1 = Number(m[3])
+          const d2 = Number(m[4])
+          const s = dayjs().year(year).month(month - 1).date(d1)
+          const e = dayjs().year(year).month(month - 1).date(d2)
+          return { start: s, end: e }
+        }
+        // 带月不带年：5月22到24号
+        m = t.match(/(\d{1,2})月(\d{1,2})[日号]?[至到\-~](\d{1,2})[日号]?/)
+        if (m) {
+          const month = Number(m[1])
+          const d1 = Number(m[2])
+          const d2 = Number(m[3])
+          const year = dayjs().year()
+          const s = dayjs().year(year).month(month - 1).date(d1)
+          const e = dayjs().year(year).month(month - 1).date(d2)
+          return { start: s, end: e }
+        }
+        // 仅日范围：22到24号（默认同月同年）
+        m = t.match(/(\d{1,2})[日号]?[至到\-~](\d{1,2})[日号]?/)
+        if (m) {
+          const d1 = Number(m[1])
+          const d2 = Number(m[2])
+          const now = dayjs()
+          const s = now.date(d1)
+          const e = now.date(d2)
+          return { start: s, end: e }
+        }
+        return null
+      }
+
       const handleCreateSchedule = async (parsed: any, content: string) => {
         const rawStart = pickDateField(parsed, ['startTime','start_time','start','startDate','start_date','begin'])
         const rawEnd = pickDateField(parsed, ['endTime','end_time','end','endDate','end_date','finish'])
@@ -687,6 +747,27 @@ const sendMessage = async () => {
           reminderTime: parsed.reminderTime ?? parsed.reminder ?? 15,
           description: parsed.description || parsed.note || '',
         }
+
+        // 如果 AI 只给出了一个日期区间（如 “22到24号”）但没有具体时间，尝试从原始文本解析并预填默认时段
+        try {
+          if ((!suggestion.startTime || !suggestion.endTime) && content && String(content).trim().length > 0) {
+            const range = parseDateRangeFromText(String(content))
+            if (range) {
+              // 默认开始时间 09:00，结束时间 18:00（可按需改为全天）
+              const s = range.start.hour(9).minute(0).second(0)
+              const e = range.end.hour(18).minute(0).second(0)
+              if (!suggestion.startTime) suggestion.startTime = s.toDate()
+              if (!suggestion.endTime) suggestion.endTime = e.toDate()
+            }
+            // 如果文本包含地点（如“在天津”），把地点加入描述以便用户查阅
+            const locMatch = String(content).match(/在([^，,。\s]+)/)
+            if (locMatch && locMatch[1]) {
+              const loc = locMatch[1]
+              if (suggestion.description) suggestion.description = suggestion.description + '；地点：' + loc
+              else suggestion.description = '地点：' + loc
+            }
+          }
+        } catch (ex) { console.warn('[AI助手] 解析日期区间失败', ex) }
 
         if (content && String(content).trim().length > 0) {
           messages.value.push({ id: String(messageIdCounter++), role: 'assistant', type: 'text', content: String(content) })

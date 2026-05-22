@@ -24,8 +24,8 @@ export const useTimeRecordStore = defineStore('timeRecord', () => {
     error.value = null
     try {
         const today = dayjs()
-        const firstDay = startDate || today.startOf('month').format('YYYY-MM-DD')
-        const lastDay = endDate || today.endOf('month').format('YYYY-MM-DD')
+        const firstDay = startDate || today.subtract(6, 'day').format('YYYY-MM-DD')
+        const lastDay = endDate || today.format('YYYY-MM-DD')
 
       let attempt = 0
       while (attempt <= retries) {
@@ -99,6 +99,7 @@ export const useTimeRecordStore = defineStore('timeRecord', () => {
   async function createRecord(record: TimeRecord) {
     try {
       const response: any = await apiCreateTimeRecord(record)
+      try { window.dispatchEvent(new CustomEvent('time-record:created', { detail: { record, response } })) } catch (e) {}
       // 后端 create 接口通常返回空 body（Result.success），因此不强制推入本地缓存
       return response
     } catch (error) {
@@ -114,6 +115,7 @@ export const useTimeRecordStore = defineStore('timeRecord', () => {
       if (index !== -1) {
         records.value[index] = { ...records.value[index], ...response }
       }
+      try { window.dispatchEvent(new CustomEvent('time-record:updated', { detail: { id, updates, response } })) } catch (e) {}
       return response
     } catch (error) {
       console.error('Failed to update time record:', error)
@@ -124,6 +126,7 @@ export const useTimeRecordStore = defineStore('timeRecord', () => {
   async function deleteRecord(id: string | number) {
     try {
       await apiDeleteTimeRecord(id)
+      try { window.dispatchEvent(new CustomEvent('time-record:deleted', { detail: { id } })) } catch (e) {}
       // 重新从后端拉取，确保后端实际删除或逻辑删除已生效
       try {
         await fetchRecords()
