@@ -33,17 +33,20 @@ public class AuthServiceImpl implements AuthService {
         }
         boolean passwordMatch;
         String storedPassword = user.getPassword();
-        if (storedPassword != null && storedPassword.startsWith("$2a$")) {
-            passwordMatch = BCrypt.checkpw(dto.getPassword(), storedPassword);
-        } else {
-            // 兼容原始明文密码数据
-            passwordMatch = storedPassword != null && storedPassword.equals(dto.getPassword());
-            if (passwordMatch) {
-                // 迁移为加密密码
-                String encoded = new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder().encode(dto.getPassword());
-                user.setPassword(encoded);
-                userMapper.updateById(user);
+        if (storedPassword != null) {
+            try {
+                passwordMatch = BCrypt.checkpw(dto.getPassword(), storedPassword);
+            } catch (Exception ex) {
+                // 如果不是标准 bcrypt 哈希，则回退到明文比较以兼容历史数据
+                passwordMatch = storedPassword.equals(dto.getPassword());
+                if (passwordMatch) {
+                    String encoded = new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder().encode(dto.getPassword());
+                    user.setPassword(encoded);
+                    userMapper.updateById(user);
+                }
             }
+        } else {
+            passwordMatch = false;
         }
         if (!passwordMatch) {
             throw new RuntimeException("密码错误");

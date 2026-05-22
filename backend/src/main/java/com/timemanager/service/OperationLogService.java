@@ -4,11 +4,15 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.timemanager.entity.OperationLog;
 import com.timemanager.entity.AlertLog;
+import com.timemanager.entity.RiskRecord;
 import com.timemanager.mapper.OperationLogMapper;
 import com.timemanager.mapper.AlertLogMapper;
+import com.timemanager.mapper.RiskRecordMapper;
+import com.timemanager.ai.service.DynamicAiService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.jdbc.core.JdbcTemplate;
+import com.timemanager.service.AlertPushService;
 import java.util.HashMap;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -20,11 +24,21 @@ import java.util.Map;
  */
 @Service
 public class OperationLogService {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(OperationLogService.class);
     @Autowired
     private OperationLogMapper operationLogMapper;
 
     @Autowired
     private AlertLogMapper alertLogMapper;
+
+    @Autowired(required = false)
+    private DynamicAiService dynamicAiService;
+
+    @Autowired(required = false)
+    private RiskRecordMapper riskRecordMapper;
+
+    @Autowired
+    private AlertPushService alertPushService;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -172,56 +186,121 @@ public class OperationLogService {
     /**
      * 如果需要，创建预警
      */
-    private void createAlertIfNeeded(OperationLog log, String riskLevel) {
+    private void createAlertIfNeeded(OperationLog operationLog, String riskLevel) {
         try {
-            String action = log.getAction().toUpperCase();
+            String action = operationLog.getAction() != null ? operationLog.getAction().toUpperCase() : "";
             AlertLog alert = null;
 
-            // DELETE 操作生成预警
-            if (action.contains("DELETE")) {
-                alert = AlertLog.builder()
-                        .alertType("BATCH_DELETE")
-                        .description("用户 " + log.getOperator() + " 执行了删除操作: " + log.getTarget())
-                        .severity("critical".equals(riskLevel) ? "critical" : "high")
-                        .relatedLogIds("[" + log.getId() + "]")
-                        .relatedUsername(log.getOperator())
-                        .relatedIp(log.getIp())
-                        .status(0)
-                        .createdAt(LocalDateTime.now())
-                        .build();
-            }
-            // GRANT_ADMIN 操作生成超高风险预警
-            else if (action.contains("GRANT_ADMIN")) {
-                alert = AlertLog.builder()
-                        .alertType("PRIVILEGE_ESCALATION")
-                        .description("用户 " + log.getOperator() + " 尝试授予管理员权限给 " + log.getTarget())
-                        .severity("critical")
-                        .relatedLogIds("[" + log.getId() + "]")
-                        .relatedUsername(log.getOperator())
-                        .relatedIp(log.getIp())
-                        .status(0)
-                        .createdAt(LocalDateTime.now())
-                        .build();
-            }
-            // RESTORE_BACKUP 操作生成预警
-            else if (action.contains("RESTORE_BACKUP")) {
+            // NOTE: 单次删除操作不再立即创建 alert_log
+            // 批量删除（阈值触发）由定时任务 RiskScanScheduler 或 OperationLogService.detectAnomalies 扫描生成
+            // 已移除：对 GRANT_ADMIN 的角色变更审计（不再为提权生成告警）
+            if (action.contains("RESTORE_BACKUP")) {
                 alert = AlertLog.builder()
                         .alertType("RESTORE_BACKUP")
-                        .description("用户 " + log.getOperator() + " 要求恢复备份")
+                        .description("用户 " + operationLog.getOperator() + " 要求恢复备份")
                         .severity("critical")
-                        .relatedLogIds("[" + log.getId() + "]")
-                        .relatedUsername(log.getOperator())
-                        .relatedIp(log.getIp())
+                        .relatedLogIds("[" + operationLog.getId() + "]")
+                        .relatedUsername(operationLog.getOperator())
+                        .relatedIp(operationLog.getIp())
                         .status(0)
                         .createdAt(LocalDateTime.now())
+                        .build();
+            }
+
+            // 恢复：对 GRANT_ADMIN 的直接操作生成告警（保留 GRANT_ADMIN 的直接告警，但禁用额外的审计表/批量扫描触发）
+            if (action.contains("GRANT_ADMIN")) {
+                String targetUser = extractTargetUsername(operationLog.getTarget());
+                String desc = String.format("用户 %s 尝试授予管理员权限给 %s", operationLog.getOperator(), targetUser);
+                alert = AlertLog.builder()
+                        .alertType("PRIVILEGE_ESCALATION")
+                        .description(desc)
+                        .severity("critical")
+                        .relatedLogIds("[" + operationLog.getId() + "]")
+                        .relatedUsername(operationLog.getOperator())
+                        .relatedIp(operationLog.getIp())
+                        .status(0)
+                        .createdAt(LocalDateTime.now())
+                        .riskScore(95)
                         .build();
             }
 
             if (alert != null) {
                 alertLogMapper.insert(alert);
+                try { createAndPushRiskRecord(alert.getAlertType(), "critical".equals(alert.getSeverity()) ? 95 : 75, alert.getDescription(), alert.getRelatedLogIds(), alert.getRelatedUsername(), alert.getRelatedIp()); } catch (Exception ex) { ex.printStackTrace(); }
+
+                // 生成短 AI 建议（不超过50字），若失败使用默认建议
+                    try {
+                        String suggestion = null;
+                        try {
+                            if (dynamicAiService != null) {
+                                suggestion = dynamicAiService.chat("安全告警：" + alert.getDescription(), "请给出处理建议。");
+                            }
+                        } catch (Exception ex) { log.warn("[OperationLogService] ai invocation failed: {}", ex.getMessage()); }
+                        if (suggestion == null || suggestion.trim().isEmpty() || suggestion.startsWith("抱歉") || suggestion.startsWith("AI返回")) {
+                            suggestion = "请管理员及时处理";
+                        }
+                        alert.setAiSuggestion(suggestion);
+                        alertLogMapper.updateById(alert);
+                    } catch (Exception ex) {
+                        log.warn("[OperationLogService] ai suggestion failed: {}", ex.getMessage());
+                    }
+
+                try {
+                    // 立即推送给在线管理员
+                    alertPushService.sendAlertLogToAdmins(alert);
+                } catch (Exception ex) {
+                    ex.printStackTrace();
+                }
             }
         } catch (Exception e) {
             e.printStackTrace();
+        }
+    }
+
+    // 风险记录表初始化标识
+    private volatile boolean riskTableInitialized = false;
+
+    private synchronized void ensureRiskTableExists() {
+        if (riskTableInitialized) return;
+        try {
+            String ddl = "CREATE TABLE IF NOT EXISTS `risk_record` ("+
+                    "`id` BIGINT PRIMARY KEY AUTO_INCREMENT,"+
+                    "`risk_type` VARCHAR(100),"+
+                    "`score` INT,"+
+                    "`description` VARCHAR(512),"+
+                    "`related_log_ids` TEXT,"+
+                    "`related_username` VARCHAR(100),"+
+                    "`related_ip` VARCHAR(50),"+
+                    "`status` TINYINT DEFAULT 0,"+
+                    "`action_taken` VARCHAR(255),"+
+                    "`created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,"+
+                    "INDEX `idx_risk_type` (`risk_type`), INDEX `idx_created_at` (`created_at`)"+
+                    ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;";
+            jdbcTemplate.execute(ddl);
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+        riskTableInitialized = true;
+    }
+
+    private void createAndPushRiskRecord(String type, int score, String description, String relatedLogIds, String relatedUsername, String relatedIp) {
+        try {
+            if (riskRecordMapper == null) return;
+            ensureRiskTableExists();
+            RiskRecord r = RiskRecord.builder()
+                    .riskType(type)
+                    .score(score)
+                    .description(description)
+                    .relatedLogIds(relatedLogIds)
+                    .relatedUsername(relatedUsername)
+                    .relatedIp(relatedIp)
+                    .status(0)
+                    .createdAt(LocalDateTime.now())
+                    .build();
+            riskRecordMapper.insert(r);
+            try { alertPushService.sendRiskRecordToAdmins(r); } catch (Exception ex) { ex.printStackTrace(); }
+        } catch (Exception ex) {
+            ex.printStackTrace();
         }
     }
 
@@ -278,10 +357,26 @@ public class OperationLogService {
                         .relatedIp(ip)
                         .relatedLogIds(null)
                         .relatedUsername(null)
+                        .riskScore(70)
                         .status(0)
                         .createdAt(LocalDateTime.now())
                         .build();
                 alertLogMapper.insert(alert);
+                // 创建风险记录并尝试生成 AI 建议（若失败使用默认文本）
+                try { createAndPushRiskRecord(alert.getAlertType(), 70, alert.getDescription(), alert.getRelatedLogIds(), alert.getRelatedUsername(), alert.getRelatedIp()); } catch (Exception ex) { ex.printStackTrace(); }
+                try {
+                    String suggestion = null;
+                    try {
+                        if (dynamicAiService != null) {
+                            suggestion = dynamicAiService.chat("安全告警：" + alert.getDescription(), "请给出处理建议。");
+                        }
+                    } catch (Exception ex) { log.warn("[OperationLogService] ai invocation failed: {}", ex.getMessage()); }
+                    if (suggestion == null || suggestion.trim().isEmpty() || suggestion.startsWith("抱歉") || suggestion.startsWith("AI返回")) {
+                        suggestion = "请管理员及时处理";
+                    }
+                    alert.setAiSuggestion(suggestion);
+                    alertLogMapper.updateById(alert);
+                } catch (Exception ex) { log.warn("[OperationLogService] ai suggestion failed: {}", ex.getMessage()); }
             }
 
             // 2) 批量删除：同一用户在最近10分钟内成功删除记录 >= 10
@@ -300,32 +395,110 @@ public class OperationLogService {
                         .relatedUsername(operator)
                         .relatedLogIds(null)
                         .relatedIp(null)
+                        .riskScore(90)
                         .status(0)
                         .createdAt(LocalDateTime.now())
                         .build();
                 alertLogMapper.insert(alert);
+                try { createAndPushRiskRecord(alert.getAlertType(), 90, alert.getDescription(), alert.getRelatedLogIds(), alert.getRelatedUsername(), alert.getRelatedIp()); } catch (Exception ex) { ex.printStackTrace(); }
+                try {
+                    String suggestion = null;
+                    try {
+                        if (dynamicAiService != null) {
+                            suggestion = dynamicAiService.chat("安全告警：" + alert.getDescription(), "请给出处理建议。");
+                        }
+                    } catch (Exception ex) { log.warn("[OperationLogService] ai invocation failed: {}", ex.getMessage()); }
+                    if (suggestion == null || suggestion.trim().isEmpty() || suggestion.startsWith("抱歉") || suggestion.startsWith("AI返回")) {
+                        suggestion = "请管理员及时处理";
+                    }
+                    alert.setAiSuggestion(suggestion);
+                    alertLogMapper.updateById(alert);
+                } catch (Exception ex) { log.warn("[OperationLogService] ai suggestion failed: {}", ex.getMessage()); }
             }
 
-            // 3) 授权/提权操作（直接记录为超高风险）
-            String sql3 = "SELECT id, operator, ip FROM operation_log " +
-                    "WHERE action LIKE '%GRANT_ADMIN%' AND LOWER(result) = 'success' " +
-                    "AND created_at >= DATE_SUB(NOW(), INTERVAL 60 MINUTE)";
-            List<Map<String, Object>> rows3 = jdbcTemplate.queryForList(sql3);
-            for (Map<String, Object> r : rows3) {
-                String operator = (String) r.get("operator");
-                String ip = (String) r.get("ip");
-                AlertLog alert = AlertLog.builder()
-                        .alertType("PRIVILEGE_ESCALATION")
-                        .description("用户 " + operator + " 成功授予管理员权限（疑似提权操作）")
-                        .severity("critical")
-                        .relatedUsername(operator)
-                        .relatedIp(ip)
-                        .relatedLogIds(null)
-                        .status(0)
-                        .createdAt(LocalDateTime.now())
-                        .build();
-                alertLogMapper.insert(alert);
-            }
+            // 3) 授权/提权操作的检测已移除（不再为 GRANT_ADMIN 生成告警）
+            
+            // 新增：基于 mapper 的细粒度检测（用于 RiskScanScheduler 集成）
+            // 1) 批量删除（按用户）
+            try {
+                List<Map<String, Object>> heavy = operationLogMapper.countHeavyDeletes(LocalDateTime.now().minusMinutes(5));
+                for (Map<String, Object> h : heavy) {
+                    String operator = (String) h.get("operator");
+                    Number cnt = (Number) h.get("delete_count");
+                    if (operator != null && cnt != null && cnt.intValue() >= 10) {
+                        AlertLog a = AlertLog.builder()
+                                .alertType("BATCH_DELETE")
+                                .description("用户 " + operator + " 在5分钟内删除了 " + cnt + " 条记录")
+                                .severity("high")
+                                .relatedUsername(operator)
+                                .riskScore(80)
+                                .status(0)
+                                .createdAt(LocalDateTime.now())
+                                .build();
+                        alertLogMapper.insert(a);
+                        try { createAndPushRiskRecord(a.getAlertType(), 80, a.getDescription(), a.getRelatedLogIds(), a.getRelatedUsername(), a.getRelatedIp()); } catch (Exception ex) { ex.printStackTrace(); }
+                        // 生成 AI 建议，若 AI 不可用或返回异常则回退到默认建议
+                        try {
+                            String suggestion = null;
+                            try {
+                                if (dynamicAiService != null) {
+                                    suggestion = dynamicAiService.chat("安全告警：" + a.getDescription(), "请给出处理建议。");
+                                }
+                            } catch (Exception ex) {
+                                log.warn("[OperationLogService] ai invocation failed: {}", ex.getMessage());
+                            }
+                            if (suggestion == null || suggestion.trim().isEmpty() || suggestion.startsWith("抱歉") || suggestion.startsWith("AI返回")) {
+                                suggestion = "请管理员及时处理";
+                            }
+                            a.setAiSuggestion(suggestion);
+                            alertLogMapper.updateById(a);
+                        } catch (Exception ex) {
+                            log.warn("[OperationLogService] ai suggestion failed: {}", ex.getMessage());
+                        }
+                        try { if (alertPushService != null) alertPushService.sendAlertLogToAdmins(a); } catch (Exception ex) { ex.printStackTrace(); }
+                    }
+                }
+            } catch (Exception ex) { log.warn("countHeavyDeletes failed", ex); }
+
+            // 2) 登录失败（按用户）
+            try {
+                List<Map<String, Object>> fails = operationLogMapper.countLoginFailures(LocalDateTime.now().minusMinutes(5));
+                for (Map<String, Object> f : fails) {
+                    String operator = (String) f.get("operator");
+                    Number cnt = (Number) f.get("fail_count");
+                    if (operator != null && cnt != null && cnt.intValue() >= 5) {
+                        AlertLog a = AlertLog.builder()
+                                .alertType("LOGIN_FAILURE_BURST")
+                                .description("用户 " + operator + " 在5分钟内登录失败 " + cnt + " 次，可能存在暴力破解")
+                                .severity("high")
+                                .relatedUsername(operator)
+                                .riskScore(75)
+                                .status(0)
+                                .createdAt(LocalDateTime.now())
+                                .build();
+                        alertLogMapper.insert(a);
+                        try { createAndPushRiskRecord(a.getAlertType(), 75, a.getDescription(), a.getRelatedLogIds(), a.getRelatedUsername(), a.getRelatedIp()); } catch (Exception ex) { ex.printStackTrace(); }
+                        try {
+                            String suggestion = null;
+                            try {
+                                if (dynamicAiService != null) {
+                                    suggestion = dynamicAiService.chat("安全告警：" + a.getDescription(), "请给出处理建议。");
+                                }
+                            } catch (Exception ex) {
+                                log.warn("[OperationLogService] ai invocation failed: {}", ex.getMessage());
+                            }
+                            if (suggestion == null || suggestion.trim().isEmpty() || suggestion.startsWith("抱歉") || suggestion.startsWith("AI返回")) {
+                                suggestion = "请管理员及时处理";
+                            }
+                            a.setAiSuggestion(suggestion);
+                            alertLogMapper.updateById(a);
+                        } catch (Exception ex) {
+                            log.warn("[OperationLogService] ai suggestion failed: {}", ex.getMessage());
+                        }
+                        try { if (alertPushService != null) alertPushService.sendAlertLogToAdmins(a); } catch (Exception ex) { ex.printStackTrace(); }
+                    }
+                }
+            } catch (Exception ex) { log.warn("countLoginFailures failed", ex); }
         } catch (Exception ex) {
             ex.printStackTrace();
         }
@@ -336,6 +509,27 @@ public class OperationLogService {
      */
     private String truncate(String str, int maxLength) {
         return str != null && str.length() > maxLength ? str.substring(0, maxLength) : str;
+    }
+
+    /**
+     * 从 target 字段中尝试提取用户名或可读标识
+     */
+    private String extractTargetUsername(String target) {
+        if (target == null || target.isEmpty()) return "未知用户";
+        try {
+            if (target.startsWith("user:")) {
+                String t = target.substring(5);
+                return t == null || t.isEmpty() ? target : t;
+            }
+            // 如果包含 ':'，返回最后一段
+            if (target.contains(":")) {
+                String[] parts = target.split(":");
+                return parts[parts.length - 1];
+            }
+            return target;
+        } catch (Exception ex) {
+            return target;
+        }
     }
 }
 

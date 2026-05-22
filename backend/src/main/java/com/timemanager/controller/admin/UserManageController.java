@@ -31,6 +31,9 @@ import java.util.Map;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import java.nio.charset.StandardCharsets;
 import java.io.ByteArrayOutputStream;
 import java.io.OutputStreamWriter;
@@ -227,6 +230,32 @@ public class UserManageController {
 
         return Result.success(response);
     }
+
+        /**
+         * 管理员禁用用户（设置 status=disabled + deleted=1），由管理员页面的“冻结账号”按钮调用
+         */
+        @PostMapping("/{username}/disable")
+        public Result<String> disableUser(@PathVariable String username) {
+            try {
+                User user = userMapper.selectOne(new QueryWrapper<User>().eq("username", username).last("LIMIT 1"));
+                if (user == null) return Result.error(404, "用户不存在");
+                user.setStatus("disabled");
+                user.setDeleted(1);
+                userMapper.updateById(user);
+
+                String operator = "system";
+                try {
+                    Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+                    if (auth != null && auth.getName() != null) operator = auth.getName();
+                } catch (Exception ignored) {}
+                try { operationLogService.recordOperation(operator, "DISABLE_USER", username, "success"); } catch (Exception ignored) {}
+
+                return Result.success("已禁用用户 " + username);
+            } catch (Exception e) {
+                e.printStackTrace();
+                return Result.error(500, "禁用用户失败: " + e.getMessage());
+            }
+        }
     
     /**
      * 获取用户详情

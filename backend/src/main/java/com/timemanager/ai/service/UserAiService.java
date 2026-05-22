@@ -273,7 +273,118 @@ public class UserAiService {
                                         如果用户请求一次创建多个任务，返回 JSON 数组，每项为 create_task。
                                         """ + "\n当前日期: " + LocalDate.now() + " 当前时间: " + LocalDateTime.now();
 
-            String aiRespModelOnly = dynamicAiService.chat(systemPromptModelOnly, userMessage, model);
+                    // 构建结构化的消息历史（将前端传来的 messages 列表按 role/content 传给模型）
+                    List<Map<String, String>> chatHistory = new java.util.ArrayList<>();
+                    if (messages != null && !messages.isEmpty()) {
+                        int from = Math.max(0, messages.size() - 12);
+                        for (int i = from; i < messages.size(); i++) {
+                            Map msg = messages.get(i);
+                            Object role = msg.get("role");
+                            Object content = msg.get("content");
+                            chatHistory.add(Map.of(
+                                    "role", role == null ? "user" : role.toString(),
+                                    "content", content == null ? "" : content.toString()
+                            ));
+                        }
+                    }
+
+                    // 构建 context 文本（与原先拼接到 userMessage 的内容一致）
+                    StringBuilder contextBuilder = new StringBuilder();
+                    if (context != null && !context.isEmpty()) {
+                        contextBuilder.append("=== 前端传入的上下文开始 ===\n");
+
+                        Object highObj = context.get("high_priority_tasks");
+                        if (highObj instanceof List) {
+                            contextBuilder.append("高优任务:\n");
+                            for (Object item : (List) highObj) {
+                                if (item instanceof Map) {
+                                    Map map = (Map) item;
+                                    Object title = map.get("title");
+                                    Object deadline = map.get("deadline");
+                                    Object est = map.get("estimatedMinutes");
+                                    contextBuilder.append("- ").append(title == null ? "(无标题)" : title.toString());
+                                    if (deadline != null) contextBuilder.append(" 截止:").append(deadline.toString());
+                                    if (est != null) contextBuilder.append(" 预估:").append(est.toString()).append("分");
+                                    contextBuilder.append("\n");
+                                }
+                            }
+                        }
+
+                        Object mediumObj = context.get("medium_priority_tasks");
+                        if (mediumObj instanceof List) {
+                            contextBuilder.append("中优任务:\n");
+                            for (Object item : (List) mediumObj) {
+                                if (item instanceof Map) {
+                                    Map map = (Map) item;
+                                    Object title = map.get("title");
+                                    Object deadline = map.get("deadline");
+                                    Object est = map.get("estimatedMinutes");
+                                    contextBuilder.append("- ").append(title == null ? "(无标题)" : title.toString());
+                                    if (deadline != null) contextBuilder.append(" 截止:").append(deadline.toString());
+                                    if (est != null) contextBuilder.append(" 预估:").append(est.toString()).append("分");
+                                    contextBuilder.append("\n");
+                                }
+                            }
+                        }
+
+                        Object procObj = context.get("procrastinate_tasks");
+                        if (procObj instanceof List) {
+                            contextBuilder.append("可拖延鱼塘（低优）:\n");
+                            for (Object item : (List) procObj) {
+                                if (item instanceof Map) {
+                                    Map map = (Map) item;
+                                    Object title = map.get("title");
+                                    Object deadline = map.get("deadline");
+                                    contextBuilder.append("- ").append(title == null ? "(无标题)" : title.toString());
+                                    if (deadline != null) contextBuilder.append(" 截止:").append(deadline.toString());
+                                    contextBuilder.append("\n");
+                                }
+                            }
+                        }
+
+                        Object completedObj = context.get("completed_tasks");
+                        if (completedObj instanceof List) {
+                            List completedList = (List) completedObj;
+                            if (!completedList.isEmpty()) {
+                                contextBuilder.append("已完成任务（共 ").append(completedList.size()).append(" 项）:\n");
+                                for (Object item : completedList) {
+                                    if (item instanceof Map) {
+                                        Map map = (Map) item;
+                                        Object title = map.get("title");
+                                        Object compAt = map.get("completedAt");
+                                        contextBuilder.append("- ").append(title == null ? "(无标题)" : title.toString());
+                                        if (compAt != null) contextBuilder.append(" 完成时间:").append(compAt.toString());
+                                        contextBuilder.append("\n");
+                                    }
+                                }
+                            }
+                        }
+
+                        Object countsObj = context.get("counts");
+                        if (countsObj instanceof Map) {
+                            Map counts = (Map) countsObj;
+                            contextBuilder.append(String.format("任务计数 - 高:%s 中:%s 低:%s 今日:%s\n",
+                                    counts.getOrDefault("high", 0), counts.getOrDefault("medium", 0), counts.getOrDefault("low", 0), counts.getOrDefault("today", 0)
+                            ));
+                        }
+
+                        Object overload = context.get("overload");
+                        if (overload != null) {
+                            contextBuilder.append("是否过载: ").append(overload.toString()).append("\n");
+                        }
+
+                        Object weekly = context.get("weekly_core_done");
+                        if (weekly != null) {
+                            contextBuilder.append("本周核心任务完成数: ").append(weekly.toString()).append("\n");
+                        }
+
+                        contextBuilder.append("=== 上下文结束 ===\n\n");
+                    }
+
+                    String finalUserContent = "用户问题: " + question + "\n\n" + contextBuilder.toString();
+                    chatHistory.add(Map.of("role", "user", "content", finalUserContent));
+
+                    String aiRespModelOnly = dynamicAiService.chat(systemPromptModelOnly, chatHistory, model);
             try {
                 String jsonStr = extractJson(aiRespModelOnly);
                 if (jsonStr == null) {
@@ -380,8 +491,110 @@ public class UserAiService {
         }
         // 本版本已移除本地意图/时间强制判定，promote 仅依赖模型的解析与返回（本地解析若需保留仅作为辅助不覆盖模型结果）
 
-        // 调用 DynamicAiService（支持指定 provider/model）
-        String aiResp = dynamicAiService.chat(systemPrompt, userMessage, model);
+        // 调用 DynamicAiService（支持指定 provider/model），使用结构化历史消息以确保模型能读取对话上下文
+        List<Map<String, String>> chatHistoryAll = new java.util.ArrayList<>();
+        if (messages != null && !messages.isEmpty()) {
+            int fromAll = Math.max(0, messages.size() - 12);
+            for (int i = fromAll; i < messages.size(); i++) {
+                Map msg = messages.get(i);
+                Object role = msg.get("role");
+                Object content = msg.get("content");
+                chatHistoryAll.add(Map.of(
+                        "role", role == null ? "user" : role.toString(),
+                        "content", content == null ? "" : content.toString()
+                ));
+            }
+        }
+
+        // 将上下文拼到最后一个 user 消息中（与原先 userMessage 中的顺序保持一致）
+        StringBuilder ctxBuilderAll = new StringBuilder();
+        if (context != null && !context.isEmpty()) {
+            ctxBuilderAll.append("=== 前端传入的上下文开始 ===\n");
+            Object highObj = context.get("high_priority_tasks");
+            if (highObj instanceof List) {
+                ctxBuilderAll.append("高优任务:\n");
+                for (Object item : (List) highObj) {
+                    if (item instanceof Map) {
+                        Map map = (Map) item;
+                        Object title = map.get("title");
+                        Object deadline = map.get("deadline");
+                        Object est = map.get("estimatedMinutes");
+                        ctxBuilderAll.append("- ").append(title == null ? "(无标题)" : title.toString());
+                        if (deadline != null) ctxBuilderAll.append(" 截止:").append(deadline.toString());
+                        if (est != null) ctxBuilderAll.append(" 预估:").append(est.toString()).append("分");
+                        ctxBuilderAll.append("\n");
+                    }
+                }
+            }
+            Object mediumObj = context.get("medium_priority_tasks");
+            if (mediumObj instanceof List) {
+                ctxBuilderAll.append("中优任务:\n");
+                for (Object item : (List) mediumObj) {
+                    if (item instanceof Map) {
+                        Map map = (Map) item;
+                        Object title = map.get("title");
+                        Object deadline = map.get("deadline");
+                        Object est = map.get("estimatedMinutes");
+                        ctxBuilderAll.append("- ").append(title == null ? "(无标题)" : title.toString());
+                        if (deadline != null) ctxBuilderAll.append(" 截止:").append(deadline.toString());
+                        if (est != null) ctxBuilderAll.append(" 预估:").append(est.toString()).append("分");
+                        ctxBuilderAll.append("\n");
+                    }
+                }
+            }
+            Object procObj = context.get("procrastinate_tasks");
+            if (procObj instanceof List) {
+                ctxBuilderAll.append("可拖延鱼塘（低优）:\n");
+                for (Object item : (List) procObj) {
+                    if (item instanceof Map) {
+                        Map map = (Map) item;
+                        Object title = map.get("title");
+                        Object deadline = map.get("deadline");
+                        ctxBuilderAll.append("- ").append(title == null ? "(无标题)" : title.toString());
+                        if (deadline != null) ctxBuilderAll.append(" 截止:").append(deadline.toString());
+                        ctxBuilderAll.append("\n");
+                    }
+                }
+            }
+            Object completedObj = context.get("completed_tasks");
+            if (completedObj instanceof List) {
+                List completedList = (List) completedObj;
+                if (!completedList.isEmpty()) {
+                    ctxBuilderAll.append("已完成任务（共 ").append(completedList.size()).append(" 项）:\n");
+                    for (Object item : completedList) {
+                        if (item instanceof Map) {
+                            Map map = (Map) item;
+                            Object title = map.get("title");
+                            Object compAt = map.get("completedAt");
+                            ctxBuilderAll.append("- ").append(title == null ? "(无标题)" : title.toString());
+                            if (compAt != null) ctxBuilderAll.append(" 完成时间:").append(compAt.toString());
+                            ctxBuilderAll.append("\n");
+                        }
+                    }
+                }
+            }
+            Object countsObj = context.get("counts");
+            if (countsObj instanceof Map) {
+                Map counts = (Map) countsObj;
+                ctxBuilderAll.append(String.format("任务计数 - 高:%s 中:%s 低:%s 今日:%s\n",
+                        counts.getOrDefault("high", 0), counts.getOrDefault("medium", 0), counts.getOrDefault("low", 0), counts.getOrDefault("today", 0)
+                ));
+            }
+            Object overload = context.get("overload");
+            if (overload != null) {
+                ctxBuilderAll.append("是否过载: ").append(overload.toString()).append("\n");
+            }
+            Object weekly = context.get("weekly_core_done");
+            if (weekly != null) {
+                ctxBuilderAll.append("本周核心任务完成数: ").append(weekly.toString()).append("\n");
+            }
+            ctxBuilderAll.append("=== 上下文结束 ===\n\n");
+        }
+
+        String finalUser = "用户问题: " + question + "\n\n" + ctxBuilderAll.toString();
+        chatHistoryAll.add(Map.of("role", "user", "content", finalUser));
+
+        String aiResp = dynamicAiService.chat(systemPrompt, chatHistoryAll, model);
 
         // 尝试解析为 JSON（取第一个完整 JSON）
         try {

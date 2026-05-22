@@ -96,12 +96,19 @@ public class OperationLogController {
     @PostMapping("/seed-demo")
     public Result<Boolean> seedDemoLogs() {
         try {
-            // 几条示例记录：删除、批量删除、授予管理员（均标记为 success） -> 应触发 high/critical
-            logService.recordOperation("demo_admin", "DELETE_USER", "user:1001", "success", "127.0.0.1", "DemoAgent/1.0");
-            logService.recordOperation("demo_admin", "BATCH_DELETE", "tasks", "success", "127.0.0.1", "DemoAgent/1.0");
-            logService.recordOperation("demo_admin", "GRANT_ADMIN", "user:1002", "success", "127.0.0.1", "DemoAgent/1.0");
+            // 生成一批删除操作以触发批量删除规则（例如在5分钟内删除15次）
+            LocalDateTime now = LocalDateTime.now();
+            for (int i = 0; i < 15; i++) {
+                // recordOperation 会使用当前时间作为 createdAt，循环插入会得到近似时间序列
+                logService.recordOperation("qiqi5", "DELETE_TASK", "task:" + (1000 + i), "success", "127.0.0.1", "DemoAgent/1.0");
+            }
+            // 插入一次提权示例以触发 PRVILEGE_ESCALATION
+            logService.recordOperation("qiqi5", "GRANT_ADMIN", "user:1002", "success", "127.0.0.1", "DemoAgent/1.0");
             // 一条失败登录示例
             logService.recordOperation("demo_user", "LOGIN", "login", "fail", "192.168.100.50", "DemoUA/1.0");
+
+            // 触发一次异常检测以立刻生成基于历史的聚合预警（如 BATCH_DELETE）
+            try { logService.detectAnomalies(); } catch (Exception ex) { /* ignore */ }
 
             return Result.success(true);
         } catch (Exception e) {

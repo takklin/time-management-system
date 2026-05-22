@@ -57,4 +57,23 @@ public interface OperationLogMapper extends BaseMapper<OperationLog> {
             "AND created_at > #{since} " +
             "GROUP BY ip HAVING COUNT(*) >= 5")
         List<Map<String, Object>> selectFailedLoginIps(@Param("since") LocalDateTime since);
+
+            // 新增：按操作者统计批量删除（最近时间段内）
+            @Select("SELECT operator, COUNT(*) as delete_count FROM operation_log " +
+                "WHERE (LOWER(action) LIKE '%delete%' OR action IN ('DELETE_TASK','BATCH_DELETE_TASKS')) " +
+                "AND LOWER(result) = 'success' AND created_at > #{since} " +
+                "GROUP BY operator HAVING COUNT(*) >= 10")
+            List<Map<String, Object>> countHeavyDeletes(@Param("since") LocalDateTime since);
+
+            // 新增：敏感操作查询（提权/授权）
+            @Select("SELECT * FROM operation_log WHERE action IN ('GRANT_ADMIN','REVOKE_ADMIN') AND created_at > #{since}")
+            List<OperationLog> selectSensitiveOps(@Param("since") LocalDateTime since);
+
+            // 新增：按操作者统计登录失败次数（最近时间段内）
+            @Select("SELECT operator, COUNT(*) as fail_count FROM operation_log " +
+                "WHERE (LOWER(action) LIKE '%login%' OR action = 'login_failed') " +
+                "AND (LOWER(result) <> 'success' OR LOWER(result) = 'fail' OR LOWER(result) = 'failed') " +
+                "AND created_at > #{since} " +
+                "GROUP BY operator HAVING COUNT(*) >= 5")
+            List<Map<String, Object>> countLoginFailures(@Param("since") LocalDateTime since);
 }

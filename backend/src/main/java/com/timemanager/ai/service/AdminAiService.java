@@ -18,6 +18,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import com.timemanager.entity.AlertLog;
+import com.timemanager.mapper.AlertLogMapper;
+import com.timemanager.service.AlertPushService;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -56,6 +59,12 @@ public class AdminAiService {
     
     @Autowired(required = false)
     private SimpMessagingTemplate messagingTemplate;
+
+    @Autowired(required = false)
+    private AlertLogMapper alertLogMapper;
+
+    @Autowired(required = false)
+    private AlertPushService alertPushService;
     
     private final ObjectMapper objectMapper = new ObjectMapper();
         private static final String SYSTEM_PROMPT = """
@@ -832,18 +841,71 @@ public class AdminAiService {
         alert.setSuggestion(suggestion);
         alert.setIsHandled(0);
         alert.setCreatedAt(LocalDateTime.now());
-        
-        aiAlertMapper.insert(alert);
-        
-        // WebSocket 推送到管理员（如果可用）
-        if (messagingTemplate != null) {
-            try {
-                messagingTemplate.convertAndSend("/topic/ai-alerts", alert);
-            } catch (Exception e) {
-                log.warn("[AI预警] WebSocket推送失败", e);
-            }
+        try {
+            aiAlertMapper.insert(alert);
+        } catch (Exception e) {
+            log.warn("[AI预警] 保存 ai_alert 记录失败: {}", e.getMessage());
         }
-        
+
+        // 同时将预警持久化到 alert_log 表，并推送给管理员，保证前端收到的 payload 包含 alert_log 的 DB id
+        try {
+            if (alertLogMapper != null) {
+                AlertLog logEntry = new AlertLog();
+                logEntry.setAlertType(type);
+                StringBuilder desc = new StringBuilder();
+                if (description != null) desc.append(description);
+                if (suggestion != null && !suggestion.isEmpty()) {
+                    if (desc.length() > 0) desc.append("\n");
+                    desc.append("建议: ").append(suggestion);
+                }
+                logEntry.setDescription(desc.toString());
+                logEntry.setSeverity(severity);
+                logEntry.setRelatedUsername("admin");
+                logEntry.setStatus(0);
+                logEntry.setCreatedAt(LocalDateTime.now());
+                // 根据 severity 设定默认 risk score（critical -> 95, high -> 80, medium -> 60, others -> 30）
+                int defaultScore = 30;
+                if (severity != null) {
+                    String s = severity.toLowerCase();
+                    if (s.contains("critical")) defaultScore = 95;
+                    else if (s.contains("high")) defaultScore = 80;
+                    else if (s.contains("medium")) defaultScore = 60;
+                }
+                logEntry.setRiskScore(defaultScore);
+                // 使用传入的 suggestion（若为空则回退到默认提示）
+                if (suggestion == null || suggestion.trim().isEmpty()) {
+                    suggestion = "请管理员及时处理";
+                }
+                logEntry.setAiSuggestion(suggestion);
+                alertLogMapper.insert(logEntry);
+
+                if (alertPushService != null) {
+                    alertPushService.sendAlertLogToAdmins(logEntry);
+                } else if (messagingTemplate != null) {
+                    Map<String, Object> payload = new java.util.HashMap<>();
+                    payload.put("id", logEntry.getId());
+                    payload.put("type", logEntry.getAlertType());
+                    payload.put("severity", logEntry.getSeverity());
+                    payload.put("title", title != null ? title : logEntry.getAlertType());
+                    payload.put("message", logEntry.getDescription());
+                    payload.put("relatedUsername", logEntry.getRelatedUsername());
+                    payload.put("createdAt", logEntry.getCreatedAt());
+                    messagingTemplate.convertAndSend("/topic/admin/alerts", payload);
+                }
+            } else {
+                // fallback: 如果没有 alertLogMapper，则直接使用 messagingTemplate 推送 ai alert 对象到 admin topic
+                if (messagingTemplate != null) {
+                    try {
+                        messagingTemplate.convertAndSend("/topic/ai-alerts", alert);
+                    } catch (Exception e) {
+                        log.warn("[AI预警] WebSocket推送失败", e);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[AI预警] 持久化或推送到 alert_log 失败", e);
+        }
+
         log.warn("[AI预警] {} - {}", type, title);
     }
     

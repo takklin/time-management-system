@@ -22,6 +22,9 @@ import java.net.MalformedURLException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
+import com.timemanager.entity.AlertLog;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import java.util.List;
 
 @RestController
@@ -41,6 +44,12 @@ public class AuthController {
 
     @Autowired
     private OperationLogService operationLogService;
+
+    @Autowired
+    private com.timemanager.service.AlertPushService alertPushService;
+
+    @Autowired
+    private com.timemanager.mapper.AlertLogMapper alertLogMapper;
 
     @PostMapping("/login")
     public Result<LoginVO> login(@RequestBody LoginDTO dto, HttpServletRequest request) {
@@ -76,8 +85,61 @@ public class AuthController {
                 "User:unknown",
                 "FAILURE: " + e.getMessage()
             );
-            
-            throw e;
+            // 发送实时预警给用户（若可识别用户）: 先写入 alert_log，再在事务提交后推送，避免插入失败导致前端缺少 id
+            try {
+                if (username != null && !"unknown".equals(username)) {
+                    AlertLog alert = new AlertLog();
+                    alert.setAlertType("LOGIN_FAILURE");
+                    // 注意：alert_log.severity 仅允许 'high' 或 'critical'，使用 'high'
+                    alert.setSeverity("high");
+                    alert.setDescription("用户 " + username + " 于 " + LocalDateTime.now().toString() + " 登录失败，来源 IP: " + ip + ", 原因: " + e.getMessage());
+                    alert.setRelatedUsername(username);
+                    alert.setRelatedIp(ip);
+                    alert.setStatus(0);
+                    alert.setCreatedAt(LocalDateTime.now());
+
+                    // 持久化到数据库
+                    try {
+                        if (alertLogMapper != null) alertLogMapper.insert(alert);
+                    } catch (Exception dbEx) {
+                        // 如果写入失败（例如 enum 值不匹配），回退为直接推送不持久化的消息
+                        dbEx.printStackTrace();
+                        java.util.Map<String, Object> fallback = new java.util.HashMap<>();
+                        fallback.put("type", "LOGIN_FAILURE");
+                        fallback.put("severity", "high");
+                        fallback.put("title", "登录失败");
+                        fallback.put("message", "您的账号于 " + LocalDateTime.now().toString() + " 登录失败。如非本人操作，请检查。" );
+                        java.util.Map<String,Object> meta = new java.util.HashMap<>();
+                        meta.put("ip", ip);
+                        meta.put("userAgent", userAgent);
+                        meta.put("reason", e.getMessage());
+                        fallback.put("metadata", meta);
+                        alertPushService.sendToUser(username, fallback);
+                        return Result.error(401, e.getMessage());
+                    }
+
+                    // 在事务提交后再推送，确保前端接收到的 payload 包含 DB id
+                    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                            @Override
+                            public void afterCommit() {
+                                try {
+                                    alertPushService.sendAlertLogToUser(username, alert);
+                                } catch (Exception ex) {
+                                    ex.printStackTrace();
+                                }
+                            }
+                        });
+                    } else {
+                        // 无事务时直接发送（已插入，安全）
+                        try { alertPushService.sendAlertLogToUser(username, alert); } catch (Exception ex) { ex.printStackTrace(); }
+                    }
+                }
+            } catch (Exception ex) {
+                ex.printStackTrace();
+            }
+
+            return Result.error(401, e.getMessage());
         }
     }
 

@@ -99,6 +99,8 @@ public class SecurityConfig {
                 .and()
                 .authorizeRequests()
                 .antMatchers("/api/v1/auth/**").permitAll()
+                // 允许 WebSocket 握手端点（STOMP/SockJS）不使用传统 HTTP 身份验证，实际认证在 STOMP CONNECT 时处理
+                .antMatchers("/ws-alert/**").permitAll()
                 // User endpoints - require authentication
                 .antMatchers("/api/v1/user/**").authenticated();
 

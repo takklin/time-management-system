@@ -3,6 +3,7 @@ package com.timemanager.entity;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.TableField;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -52,4 +53,16 @@ public class AlertLog {
 
     /** 创建时间 */
     private LocalDateTime createdAt;
+
+    /** 风险评分（可选） */
+    @TableField("risk_score")
+    private Integer riskScore;
+
+    /** AI 建议（可选） */
+    @TableField("ai_suggestion")
+    private String aiSuggestion;
+
+    /** 软删除标记：0=有效,1=已删除 */
+    @TableField("is_deleted")
+    private Integer isDeleted;
 }
