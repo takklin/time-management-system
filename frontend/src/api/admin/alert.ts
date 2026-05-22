@@ -54,3 +54,34 @@ export function batchConfirmAlerts(alertIds: number[], handledBy?: string) {
     params: { handledBy }
   })
 }
+
+/**
+ * 管理员主动通知用户（点对点）
+ */
+export function notifyUser(alertId: number, message?: string, username?: string) {
+  return request.post(`/v1/admin/alerts/${alertId}/notify`, null, {
+    params: { message, username }
+  })
+}
+
+/**
+ * 管理员清空所有告警（归档）
+ */
+export function clearAllAlerts() {
+  return request.delete('/v1/admin/alerts/all')
+}
+
+/**
+ * 删除单条告警（管理员）
+ */
+export function deleteAlert(id: number) {
+  return request.delete(`/v1/admin/alerts/${id}`)
+}
+
+/**
+ * 批量删除告警（管理员）
+ * 传递 body 为 id 数组
+ */
+export function batchDeleteAlerts(ids: number[]) {
+  return request.delete('/v1/admin/alerts', { data: ids })
+}
